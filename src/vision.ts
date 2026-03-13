@@ -1,5 +1,5 @@
 import { getConfig } from './config.js';
-import type { AnthropicMessage, AnthropicContentBlock } from './types.js';
+import type { AnthropicMessage, AnthropicContentBlock, VisionProvider } from './types.js';
 import { getProxyFetchOptions } from './proxy-agent.js';
 import { createWorker } from 'tesseract.js';
 import crypto from 'crypto';
@@ -51,8 +51,8 @@ export async function applyVisionInterceptor(messages: AnthropicMessage[]): Prom
                     console.log(`[Vision] 启用纯本地 OCR 模式，正在处理 ${imagesToAnalyze.length} 张图片... (无需 API Key)`);
                     descriptions = await processWithLocalOCR(imagesToAnalyze);
                 } else {
-                    console.log(`[Vision] 启用外部 API 模式，正在处理 ${imagesToAnalyze.length} 张图片...`);
-                    descriptions = await callVisionAPI(imagesToAnalyze);
+                    // API mode: try providers in order with fallback
+                    descriptions = await processWithAPIFallback(imagesToAnalyze);
                 }
 
                 // Add descriptions as a simulated system text block
@@ -72,6 +72,71 @@ export async function applyVisionInterceptor(messages: AnthropicMessage[]): Prom
             }
         }
     }
+}
+
+/**
+ * Try each API provider in order. If all fail and fallbackToOcr is enabled,
+ * fall back to local OCR as the last resort.
+ */
+async function processWithAPIFallback(imagesToAnalyze: AnthropicContentBlock[]): Promise<string> {
+    const visionConfig = getConfig().vision!;
+    const providers = visionConfig.providers;
+    const errors: string[] = [];
+
+    // If we have providers, try them in order
+    if (providers.length > 0) {
+        for (let i = 0; i < providers.length; i++) {
+            const provider = providers[i];
+            const providerLabel = provider.name || `Provider #${i + 1} (${provider.model})`;
+            try {
+                console.log(`[Vision] 尝试 API ${providerLabel}，正在处理 ${imagesToAnalyze.length} 张图片...`);
+                const result = await callVisionAPIWithProvider(imagesToAnalyze, provider);
+                console.log(`[Vision] ✅ ${providerLabel} 处理成功`);
+                return result;
+            } catch (err) {
+                const errMsg = (err as Error).message;
+                console.warn(`[Vision] ❌ ${providerLabel} 失败: ${errMsg}`);
+                errors.push(`${providerLabel}: ${errMsg}`);
+                // Continue to next provider
+            }
+        }
+    } else if (visionConfig.baseUrl && visionConfig.apiKey) {
+        // Legacy fallback: single provider from top-level fields
+        const legacyProvider: VisionProvider = {
+            name: 'default',
+            baseUrl: visionConfig.baseUrl,
+            apiKey: visionConfig.apiKey,
+            model: visionConfig.model,
+        };
+        try {
+            console.log(`[Vision] 启用外部 API 模式，正在处理 ${imagesToAnalyze.length} 张图片...`);
+            const result = await callVisionAPIWithProvider(imagesToAnalyze, legacyProvider);
+            return result;
+        } catch (err) {
+            const errMsg = (err as Error).message;
+            console.warn(`[Vision] ❌ API 调用失败: ${errMsg}`);
+            errors.push(`default: ${errMsg}`);
+        }
+    }
+
+    // All API providers failed — try OCR fallback
+    if (visionConfig.fallbackToOcr) {
+        console.log(`[Vision] 所有 API 均失败 (${errors.length} 个错误)，兜底使用本地 OCR...`);
+        try {
+            return await processWithLocalOCR(imagesToAnalyze);
+        } catch (ocrErr) {
+            throw new Error(
+                `All ${errors.length} API provider(s) failed AND local OCR fallback also failed. ` +
+                `API errors: [${errors.join(' | ')}]. OCR error: ${(ocrErr as Error).message}`
+            );
+        }
+    }
+
+    // fallbackToOcr is disabled and all providers failed
+    throw new Error(
+        `All ${errors.length} API provider(s) failed and fallback_to_ocr is disabled. ` +
+        `Errors: [${errors.join(' | ')}]`
+    );
 }
 
 async function processWithLocalOCR(imageBlocks: AnthropicContentBlock[]): Promise<string> {
@@ -123,11 +188,15 @@ async function processWithLocalOCR(imageBlocks: AnthropicContentBlock[]): Promis
     return combinedText;
 }
 
-async function callVisionAPI(imageBlocks: AnthropicContentBlock[]): Promise<string> {
-    const config = getConfig().vision!;
+/**
+ * Call a specific Vision API provider for image analysis.
+ * Processes images individually for per-image caching.
+ * Throws on failure so the caller can try the next provider.
+ */
+async function callVisionAPIWithProvider(imageBlocks: AnthropicContentBlock[], provider: VisionProvider): Promise<string> {
     let combinedText = '';
+    let hasAnyFailure = false;
     
-    // We will process images individually to be able to cache them separately
     for (let i = 0; i < imageBlocks.length; i++) {
         const img = imageBlocks[i];
         let url = '';
@@ -155,35 +224,31 @@ async function callVisionAPI(imageBlocks: AnthropicContentBlock[]): Promise<stri
             ];
 
             const payload = {
-                model: config.model,
+                model: provider.model,
                 messages: [{ role: 'user', content: parts }],
                 max_tokens: 1500
             };
 
-            try {
-                const res = await fetch(config.baseUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${config.apiKey}`
-                    },
-                    body: JSON.stringify(payload),
-                    ...getProxyFetchOptions(),
-                } as any);
+            const res = await fetch(provider.baseUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${provider.apiKey}`
+                },
+                body: JSON.stringify(payload),
+                ...getProxyFetchOptions(),
+            } as any);
 
-                if (!res.ok) {
-                    throw new Error(`Vision API returned status ${res.status}: ${await res.text()}`);
-                }
-
-                const data = await res.json() as any;
-                const description = data.choices?.[0]?.message?.content || 'No description returned.';
-                
-                setCache(hash, description);
-                combinedText += `--- Image ${i + 1} Description ---\n${description}\n\n`;
-            } catch (err) {
-                console.error(`[Vision API Error] Failed to process image ${i + 1}:`, err);
-                combinedText += `--- Image ${i + 1} ---\n(Failed to process image with API: ${(err as Error).message})\n\n`;
+            if (!res.ok) {
+                const errBody = await res.text();
+                throw new Error(`API returned status ${res.status}: ${errBody}`);
             }
+
+            const data = await res.json() as any;
+            const description = data.choices?.[0]?.message?.content || 'No description returned.';
+            
+            setCache(hash, description);
+            combinedText += `--- Image ${i + 1} Description ---\n${description}\n\n`;
         }
     }
 

@@ -118,6 +118,11 @@ export interface AppConfig {
     vision?: {
         enabled: boolean;
         mode: 'ocr' | 'api';
+        /** Multiple API providers to try in order; used when mode is 'api' */
+        providers: VisionProvider[];
+        /** If all API providers fail, fall back to local OCR (default: true) */
+        fallbackToOcr: boolean;
+        // Legacy single-provider fields kept for backward compat
         baseUrl: string;
         apiKey: string;
         model: string;
@@ -126,3 +131,11 @@ export interface AppConfig {
         userAgent: string;
     };
 }
+
+export interface VisionProvider {
+    name?: string;
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+}
+

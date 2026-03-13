@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'fs';
 import { parse as parseYaml } from 'yaml';
-import type { AppConfig } from './types.js';
+import type { AppConfig, VisionProvider } from './types.js';
 
 let config: AppConfig;
 
@@ -32,9 +32,30 @@ export function getConfig(): AppConfig {
                 if (yaml.fingerprint.user_agent) config.fingerprint.userAgent = yaml.fingerprint.user_agent;
             }
             if (yaml.vision) {
+                // Parse providers array
+                let providers: VisionProvider[] = [];
+                if (Array.isArray(yaml.vision.providers)) {
+                    providers = yaml.vision.providers.map((p: any) => ({
+                        name: p.name || '',
+                        baseUrl: p.base_url || 'https://api.openai.com/v1/chat/completions',
+                        apiKey: p.api_key || '',
+                        model: p.model || 'gpt-4o-mini',
+                    }));
+                } else if (yaml.vision.base_url && yaml.vision.api_key) {
+                    // Backward compat: single provider from legacy fields
+                    providers = [{
+                        name: 'default',
+                        baseUrl: yaml.vision.base_url,
+                        apiKey: yaml.vision.api_key,
+                        model: yaml.vision.model || 'gpt-4o-mini',
+                    }];
+                }
+
                 config.vision = {
-                    enabled: yaml.vision.enabled !== false, // default to true if vision section exists in some way
+                    enabled: yaml.vision.enabled !== false,
                     mode: yaml.vision.mode || 'ocr',
+                    providers,
+                    fallbackToOcr: yaml.vision.fallback_to_ocr !== false, // default true
                     baseUrl: yaml.vision.base_url || 'https://api.openai.com/v1/chat/completions',
                     apiKey: yaml.vision.api_key || '',
                     model: yaml.vision.model || 'gpt-4o-mini',
