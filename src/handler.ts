@@ -677,51 +677,27 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
             console.log(`[Handler] 重试响应 (${fullResponse.length} chars): ${fullResponse.substring(0, 200)}${fullResponse.length > 200 ? '...' : ''}`);
         }
 
-        // ★ Thinking 提取：在截断检测之前提取，避免 thinking 内容浪费 token 预算触发假截断
+        // ★ 根因修复：Thinking 处理简化
+        // 工具模式下，tool instructions 已主动禁止 <thinking>，
+        // 但模型可能仍然输出。直接静默剥离即可，不再浪费额外 API 调用重试。
         const config = getConfig();
         let thinkingBlocks: Array<{ thinking: string }> = [];
-        if (config.enableThinking && fullResponse.includes('<thinking>')) {
+        if (fullResponse.includes('<thinking>')) {
             const extracted = extractThinking(fullResponse);
-            thinkingBlocks = extracted.thinkingBlocks;
             fullResponse = extracted.cleanText;
 
-            // ★ Thinking 占比过高检测：如果 thinking 内容远超实际内容，说明 thinking 吃掉了 output 预算
-            // 此时丢弃 thinking 并用禁止 thinking 的方式重新请求，把预算留给实际内容
-            const thinkingChars = thinkingBlocks.reduce((s, b) => s + b.thinking.length, 0);
-            if (hasTools && isTruncated(fullResponse) && thinkingChars > fullResponse.length * 2) {
-                console.log(`[Handler] ⚠️ Thinking 占比过高 (thinking=${thinkingChars}, content=${fullResponse.length})，禁用 thinking 重试...`);
-                thinkingBlocks = []; // 丢弃 thinking（已经不够完整了）
-
-                // 在最后一条 user 消息末尾追加禁止 thinking 指令
-                const retryMessages = [...activeCursorReq.messages];
-                let lastUserIdx = -1;
-                for (let i = retryMessages.length - 1; i >= 0; i--) {
-                    if (retryMessages[i].role === 'user') { lastUserIdx = i; break; }
+            if (hasTools) {
+                // 工具模式：直接丢弃 thinking（不传递给客户端，节省输出预算）
+                const thinkingChars = extracted.thinkingBlocks.reduce((s, b) => s + b.thinking.length, 0);
+                if (thinkingChars > 0) {
+                    console.log(`[Handler] 工具模式下剥离 thinking (${thinkingChars} chars)，不浪费 API 调用重试`);
                 }
-                if (lastUserIdx >= 0) {
-                    const lastMsg = retryMessages[lastUserIdx];
-                    const lastText = lastMsg.parts.map(p => p.text || '').join('');
-                    retryMessages[lastUserIdx] = {
-                        ...lastMsg,
-                        parts: [{ type: 'text', text: lastText + '\n\nDo NOT use <thinking> tags. Output the action block directly.' }],
-                    };
-                }
-
-                fullResponse = '';
-                await sendCursorRequest({ ...activeCursorReq, messages: retryMessages }, (event: CursorSSEEvent) => {
-                    if (event.type === 'text-delta' && event.delta) {
-                        fullResponse += event.delta;
-                    }
-                });
-                console.log(`[Handler] 禁用 thinking 重试响应 (${fullResponse.length} chars): ${fullResponse.substring(0, 200)}${fullResponse.length > 200 ? '...' : ''}`);
-
-                // 重试响应也可能有 thinking（模型不听话），再提取一次
-                if (fullResponse.includes('<thinking>')) {
-                    const re = extractThinking(fullResponse);
-                    thinkingBlocks = re.thinkingBlocks;
-                    fullResponse = re.cleanText;
-                }
+                // thinkingBlocks 保持空 — 工具模式不输出 thinking
+            } else if (config.enableThinking) {
+                // 非工具模式 + thinking 启用：保留 thinking 传递给客户端
+                thinkingBlocks = extracted.thinkingBlocks;
             }
+            // 非工具模式 + thinking 未启用：也是静默丢弃
         }
 
         // 流完成后，处理完整响应
@@ -781,11 +757,13 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
                     break; // 放弃 Tier 策略，直接用原始截断响应 + max_tokens
                 }
 
-                // 新响应也可能有 thinking，再次提取
-                if (config.enableThinking && fullResponse.includes('<thinking>')) {
+                // 新响应也可能有 thinking — 统一剥离
+                if (fullResponse.includes('<thinking>')) {
                     const extracted = extractThinking(fullResponse);
-                    thinkingBlocks = [...thinkingBlocks, ...extracted.thinkingBlocks];
                     fullResponse = extracted.cleanText;
+                    if (!hasTools && config.enableThinking) {
+                        thinkingBlocks = [...thinkingBlocks, ...extracted.thinkingBlocks];
+                    }
                 }
 
                 // 如果新响应没有截断，成功跳出
@@ -1094,13 +1072,21 @@ async function handleNonStream(res: Response, cursorReq: CursorChatRequest, body
         console.log(`[Handler] 非流式：重试响应 (${fullText.length} chars): ${fullText.substring(0, 200)}${fullText.length > 200 ? '...' : ''}`);
     }
 
-    // ★ Thinking 提取：在截断检测之前提取，避免浪费 token 预算
     const config = getConfig();
+    // ★ 根因修复：与流式路径对齐的简化 Thinking 处理
     let thinkingBlocks: Array<{ thinking: string }> = [];
-    if (config.enableThinking && fullText.includes('<thinking>')) {
+    if (fullText.includes('<thinking>')) {
         const extracted = extractThinking(fullText);
-        thinkingBlocks = extracted.thinkingBlocks;
         fullText = extracted.cleanText;
+
+        if (hasTools) {
+            const thinkingChars = extracted.thinkingBlocks.reduce((s, b) => s + b.thinking.length, 0);
+            if (thinkingChars > 0) {
+                console.log(`[Handler] 非流式：工具模式下剥离 thinking (${thinkingChars} chars)`);
+            }
+        } else if (config.enableThinking) {
+            thinkingBlocks = extracted.thinkingBlocks;
+        }
     }
 
     // ★ 阶梯式截断恢复（与流式路径对齐）
@@ -1149,11 +1135,14 @@ async function handleNonStream(res: Response, cursorReq: CursorChatRequest, body
                 break;
             }
 
-            // 新响应也可能有 thinking
-            if (config.enableThinking && fullText.includes('<thinking>')) {
+            // 新响应也可能有 thinking — 统一剥离
+            if (fullText.includes('<thinking>')) {
                 const extracted = extractThinking(fullText);
-                thinkingBlocks = [...thinkingBlocks, ...extracted.thinkingBlocks];
                 fullText = extracted.cleanText;
+                // 工具模式下丢弃 thinking，非工具模式保留
+                if (!hasTools && config.enableThinking) {
+                    thinkingBlocks = [...thinkingBlocks, ...extracted.thinkingBlocks];
+                }
             }
 
             if (!isTruncated(fullText)) {
