@@ -35,26 +35,45 @@ app.use((_req, res, next) => {
     next();
 });
 
+// ==================== 鉴权中间件 ====================
+
+function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+        // 未配置 API_KEY 则不鉴权，保持原有行为
+        next();
+        return;
+    }
+    const auth = req.headers['authorization'] || '';
+    const xApiKey = req.headers['x-api-key'] as string || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : xApiKey.trim();
+    if (token !== apiKey) {
+        res.status(401).json({ error: { message: 'Invalid API key', type: 'authentication_error' } });
+        return;
+    }
+    next();
+}
+
 // ==================== 路由 ====================
 
 // Anthropic Messages API
-app.post('/v1/messages', handleMessages);
-app.post('/messages', handleMessages);
+app.post('/v1/messages', authMiddleware, handleMessages);
+app.post('/messages', authMiddleware, handleMessages);
 
 // OpenAI Chat Completions API（兼容）
-app.post('/v1/chat/completions', handleOpenAIChatCompletions);
-app.post('/chat/completions', handleOpenAIChatCompletions);
+app.post('/v1/chat/completions', authMiddleware, handleOpenAIChatCompletions);
+app.post('/chat/completions', authMiddleware, handleOpenAIChatCompletions);
 
 // OpenAI Responses API（Cursor IDE Agent 模式）
-app.post('/v1/responses', handleOpenAIResponses);
-app.post('/responses', handleOpenAIResponses);
+app.post('/v1/responses', authMiddleware, handleOpenAIResponses);
+app.post('/responses', authMiddleware, handleOpenAIResponses);
 
 // Token 计数
-app.post('/v1/messages/count_tokens', countTokens);
-app.post('/messages/count_tokens', countTokens);
+app.post('/v1/messages/count_tokens', authMiddleware, countTokens);
+app.post('/messages/count_tokens', authMiddleware, countTokens);
 
 // OpenAI 兼容模型列表
-app.get('/v1/models', listModels);
+app.get('/v1/models', authMiddleware, listModels);
 
 // 健康检查
 app.get('/health', (_req, res) => {
