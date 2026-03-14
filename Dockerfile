@@ -36,11 +36,16 @@ COPY --from=builder --chown=cursor:nodejs /app/dist ./dist
 # 拷贝默认配置文件（可通过 volume 挂载覆盖）
 COPY --chown=cursor:nodejs config.yaml ./config.yaml
 
+# 运行时生成配置（用于 Railway 等平台注入环境变量，避免把 key 写进仓库）
+COPY --chown=cursor:nodejs scripts/entrypoint.sh /app/entrypoint.sh
+
 # 切换到非 root 用户
 USER cursor
 
 # 声明对外暴露的端口
 EXPOSE 3010
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # 启动服务
 CMD ["npm", "start"]
