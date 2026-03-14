@@ -1,4 +1,4 @@
-# Cursor2API v2.6
+# Cursor2API v2.6.2
 
 将 Cursor 文档页免费 AI 对话接口代理转换为 **Anthropic Messages API** 和 **OpenAI Chat Completions API**，支持 **Claude Code** 和 **Cursor IDE** 使用。
 
@@ -30,10 +30,10 @@
 - **全工具支持** - 无工具白名单限制，支持所有 MCP 工具和自定义扩展
 - **多层拒绝拦截** - 自动检测和抑制 Cursor 文档助手的拒绝行为（工具和非工具模式均生效）
 - **三层身份保护** - 身份探针拦截 + 拒绝重试 + 响应清洗，确保输出永远呈现 Claude 身份
-- **🆕 Thinking 支持** - `<thinking>` 标签推理提取，Anthropic/OpenAI 双路径输出，3 行/120 词硬限制避免吃 output 预算
+- **🆕 Thinking 支持** - `<thinking>` 标签推理提取，Anthropic/OpenAI 双路径输出，反引号容错清理
 - **🆕 阶梯式截断恢复** - Tier 1 Bash/拆分引导 → Tier 2 强制拆分 → Tier 3-4 传统续写，替代旧的盲目续写
-- **🆕 工具签名压缩** - 函数签名格式 `ToolName(params)` + 类型缩写 (str/num/bool/int)，~50% token 节省
-- **🆕 反拒绝角色扩展** - 借鉴 Cursor-Toolbox 策略，在 USER 消息中注入角色扩展指令，大幅降低拒绝率
+- **🆕 工具签名压缩** - Markdown 文档格式 + 类型缩写 (str/num/bool/int)，~50% token 节省
+- **🆕 URL 图片自动下载** - OpenClaw/Telegram 等客户端发送的 URL 图片自动下载转 base64，确保 vision 拦截生效
 - **截断无缝续写** - Proxy 底层自动拼接被截断的工具响应（代码块/XML未闭合）
 - **续写智能去重** - 模型续写时自动检测并移除与截断点重叠的重复内容
 - **渐进式历史压缩** - 保留最近6条消息完整，仅截短早期消息超长文本
@@ -163,6 +163,49 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 | **L4: 响应清洗** | `handler.ts` | `sanitizeResponse()` 对所有输出做后处理，将 Cursor 身份引用替换为 Claude |
 
 ## 更新日志
+
+### v2.6.2 (2026-03-14) — 动态工具结果预算 + 工具指令瘦身 + Thinking 简化
+
+**🗜️ 动态工具结果预算（替代固定 15K 硬编码）**
+- 根因：Cursor API 输出预算与输入大小成反比，固定 15K 工具结果在大上下文下严重挤压输出空间，导致工具调用截断
+- 新增 `getToolResultBudget()`：根据当前上下文大小动态计算工具结果截断阈值
+  - \>100K chars → 4K | >60K → 6K | >30K → 10K | ≤30K → 15K（完整保留）
+- 在 `convertToCursorRequest()` 中预估并跟踪上下文字符数，压缩前后均更新
+
+**🗜️ 工具指令体积优化（减少 ~30% 输入）**
+- 已知工具跳过描述：Read/Write/Edit/Bash/Search 等常用工具不再输出冗余描述（模型已从训练数据中了解）
+- 大工具集激进压缩：>25 个工具时 `compactSchema()` 仅保留 required 参数，进一步缩减输入
+- few-shot 紧凑化：示例工具调用从 pretty-print JSON 改为单行紧凑 JSON
+- 历史压缩阈值从 400K 降至 100K，工具模式下早期消息截断从 2000 降至 1500 字符
+
+**🧠 Thinking 处理简化（消除浪费性重试）**
+- 问题：之前检测到 thinking 占比过高时会发起额外 API 调用重试，浪费 1 次请求且效果不稳定
+- 新策略：工具指令中主动注入 `Do NOT use <thinking> tags` 禁令，从源头阻止 thinking 输出
+- 工具模式下收到 thinking 直接静默剥离，不再触发重试 API 调用
+- 流式/非流式路径统一对齐：thinking 提取逻辑从 `config.enableThinking` 条件改为无条件提取 + 按模式选择性保留
+- 效果：工具模式下节省 1-2 次 API 调用，降低延迟和 quota 消耗
+
+**⚡ 输出格式优化**
+- 工具指令新增 `Use compact JSON` 规则，引导模型输出无多余空白的 JSON action blocks
+- Write 工具行数限制从 150 → 80 行，超出时引导使用 `cat >> file` 分片写入
+- 整体减少输出 token 消耗，为实际内容留更多空间
+
+### v2.6.1 (2026-03-14) — 工具调用截断修复五连发 + Thinking 修复 + URL 图片兼容
+
+**🔧 工具调用截断修复五连发**
+- isTruncated 重写：消除工具调用 JSON 中反引号导致的误判
+- 完整工具调用跳过 Tier 恢复：检测到完整 action 块时直接跳过阶梯式截断恢复，避免浪费 4 次 API 调用
+- 工具模式不注入 THINKING_HINT：根治 thinking 占用输出预算导致工具调用截断
+- Thinking 占比过高自动禁用重试：thinking 内容远超实际内容时丢弃并禁用 thinking 重新请求
+- 拒绝率回归修复：回归 v2.5.6 "场景融合" 策略，移除对抗性注入
+
+**🧠 Thinking 反引号修复**
+- 修复模型用反引号包裹 thinking 输出导致正文被截断/格式错乱的问题
+- THINKING_HINT 精简为自然语句，减少被识别为 prompt injection 的概率
+
+**📸 URL 图片自动下载（OpenClaw/Telegram 兼容）**
+- 新增 `convertUrlImagesToBase64()`：在 vision 拦截器处理前，将 URL 类型图片下载并转为 base64
+- 30s 超时，支持代理，下载失败时保留原始 URL 兜底
 
 ### v2.6.0 (2026-03-13) — Thinking 支持 + 阶梯式截断恢复 + 提示词精简 + 反拒绝策略升级
 

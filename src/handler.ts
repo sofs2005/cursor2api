@@ -445,13 +445,24 @@ export async function handleMessages(req: Request, res: Response): Promise<void>
 export function isTruncated(text: string): boolean {
     if (!text || text.trim().length === 0) return false;
     const trimmed = text.trimEnd();
-    // 代码块未闭合
-    const codeBlockOpen = (trimmed.match(/```/g) || []).length % 2 !== 0;
-    if (codeBlockOpen) return true;
-    // 检测 ```json action 块已开始但 JSON 对象未闭合（截断发生在工具调用参数中间）
-    const jsonActionBlocks = trimmed.match(/```json\s+action[\s\S]*?```/g) || [];
+
+    // ★ 核心检测：```json action 块是否未闭合（截断发生在工具调用参数中间）
+    // 这是最精确的截断检测 — 只关心实际的工具调用代码块
+    // 注意：不能简单计数所有 ``` 因为 JSON 字符串值里可能包含 markdown 反引号
     const jsonActionOpens = (trimmed.match(/```json\s+action/g) || []).length;
-    if (jsonActionOpens > jsonActionBlocks.length) return true;
+    if (jsonActionOpens > 0) {
+        // 从工具调用的角度检测：开始标记比闭合标记多 = 截断
+        const jsonActionBlocks = trimmed.match(/```json\s+action[\s\S]*?```/g) || [];
+        if (jsonActionOpens > jsonActionBlocks.length) return true;
+        // 所有 action 块都闭合了 = 没截断（即使响应文本被截断，工具调用是完整的）
+        return false;
+    }
+
+    // 无工具调用时的通用截断检测（纯文本响应）
+    // 代码块未闭合：只检测行首的代码块标记，避免 JSON 值中的反引号误判
+    const lineStartCodeBlocks = (trimmed.match(/^```/gm) || []).length;
+    if (lineStartCodeBlocks % 2 !== 0) return true;
+
     // XML/HTML 标签未闭合 (Cursor 有时在中途截断)
     const openTags = (trimmed.match(/^<[a-zA-Z]/gm) || []).length;
     const closeTags = (trimmed.match(/^<\/[a-zA-Z]/gm) || []).length;
@@ -666,13 +677,27 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
             console.log(`[Handler] 重试响应 (${fullResponse.length} chars): ${fullResponse.substring(0, 200)}${fullResponse.length > 200 ? '...' : ''}`);
         }
 
-        // ★ Thinking 提取：在截断检测之前提取，避免 thinking 内容浪费 token 预算触发假截断
+        // ★ 根因修复：Thinking 处理简化
+        // 工具模式下，tool instructions 已主动禁止 <thinking>，
+        // 但模型可能仍然输出。直接静默剥离即可，不再浪费额外 API 调用重试。
         const config = getConfig();
         let thinkingBlocks: Array<{ thinking: string }> = [];
-        if (config.enableThinking && fullResponse.includes('<thinking>')) {
+        if (fullResponse.includes('<thinking>')) {
             const extracted = extractThinking(fullResponse);
-            thinkingBlocks = extracted.thinkingBlocks;
             fullResponse = extracted.cleanText;
+
+            if (hasTools) {
+                // 工具模式：直接丢弃 thinking（不传递给客户端，节省输出预算）
+                const thinkingChars = extracted.thinkingBlocks.reduce((s, b) => s + b.thinking.length, 0);
+                if (thinkingChars > 0) {
+                    console.log(`[Handler] 工具模式下剥离 thinking (${thinkingChars} chars)，不浪费 API 调用重试`);
+                }
+                // thinkingBlocks 保持空 — 工具模式不输出 thinking
+            } else if (config.enableThinking) {
+                // 非工具模式 + thinking 启用：保留 thinking 传递给客户端
+                thinkingBlocks = extracted.thinkingBlocks;
+            }
+            // 非工具模式 + thinking 未启用：也是静默丢弃
         }
 
         // 流完成后，处理完整响应
@@ -692,8 +717,8 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
                 console.log(`[Handler] ⚠️ 检测到截断 (${fullResponse.length} chars)，执行 Tier ${truncationTier} 策略${isFirstTier ? '（Bash/拆分引导）' : '（强制拆分）'}...`);
 
                 const tierPrompt = isFirstTier
-                    ? `Output truncated (${fullResponse.length} chars). Split into smaller parts: use multiple Write calls (≤150 lines each) or Bash append (\`cat >> file << 'EOF'\`). Start with the first chunk now.`
-                    : `Still truncated (${fullResponse.length} chars). Use ≤80 lines per action block. Start first chunk now.`;
+                    ? `Output truncated (${fullResponse.length} chars). Do NOT use <thinking> tags. Split into smaller parts: use multiple Write calls (≤150 lines each) or Bash append (\`cat >> file << 'EOF'\`). Start with the first chunk now.`
+                    : `Still truncated (${fullResponse.length} chars). Do NOT use <thinking> tags. Use ≤80 lines per action block. Start first chunk now.`;
 
                 // 丢弃截断的响应，让模型重新用拆分策略生成
                 activeCursorReq = {
@@ -732,11 +757,13 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
                     break; // 放弃 Tier 策略，直接用原始截断响应 + max_tokens
                 }
 
-                // 新响应也可能有 thinking，再次提取
-                if (config.enableThinking && fullResponse.includes('<thinking>')) {
+                // 新响应也可能有 thinking — 统一剥离
+                if (fullResponse.includes('<thinking>')) {
                     const extracted = extractThinking(fullResponse);
-                    thinkingBlocks = [...thinkingBlocks, ...extracted.thinkingBlocks];
                     fullResponse = extracted.cleanText;
+                    if (!hasTools && config.enableThinking) {
+                        thinkingBlocks = [...thinkingBlocks, ...extracted.thinkingBlocks];
+                    }
                 }
 
                 // 如果新响应没有截断，成功跳出
@@ -753,7 +780,7 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
                 const anchorLength = Math.min(300, fullResponse.length);
                 const anchorText = fullResponse.slice(-anchorLength);
 
-                const continuationPrompt = `Output cut off. Last part:\n\`\`\`\n...${anchorText}\n\`\`\`\nContinue exactly from the cut-off point. No repeats.`;
+                const continuationPrompt = `Output cut off. Last part:\n\`\`\`\n...${anchorText}\n\`\`\`\nContinue exactly from the cut-off point. No repeats. Do NOT use <thinking> tags.`;
 
                 activeCursorReq = {
                     ...activeCursorReq,
@@ -1045,13 +1072,21 @@ async function handleNonStream(res: Response, cursorReq: CursorChatRequest, body
         console.log(`[Handler] 非流式：重试响应 (${fullText.length} chars): ${fullText.substring(0, 200)}${fullText.length > 200 ? '...' : ''}`);
     }
 
-    // ★ Thinking 提取：在截断检测之前提取，避免浪费 token 预算
     const config = getConfig();
+    // ★ 根因修复：与流式路径对齐的简化 Thinking 处理
     let thinkingBlocks: Array<{ thinking: string }> = [];
-    if (config.enableThinking && fullText.includes('<thinking>')) {
+    if (fullText.includes('<thinking>')) {
         const extracted = extractThinking(fullText);
-        thinkingBlocks = extracted.thinkingBlocks;
         fullText = extracted.cleanText;
+
+        if (hasTools) {
+            const thinkingChars = extracted.thinkingBlocks.reduce((s, b) => s + b.thinking.length, 0);
+            if (thinkingChars > 0) {
+                console.log(`[Handler] 非流式：工具模式下剥离 thinking (${thinkingChars} chars)`);
+            }
+        } else if (config.enableThinking) {
+            thinkingBlocks = extracted.thinkingBlocks;
+        }
     }
 
     // ★ 阶梯式截断恢复（与流式路径对齐）
@@ -1100,11 +1135,14 @@ async function handleNonStream(res: Response, cursorReq: CursorChatRequest, body
                 break;
             }
 
-            // 新响应也可能有 thinking
-            if (config.enableThinking && fullText.includes('<thinking>')) {
+            // 新响应也可能有 thinking — 统一剥离
+            if (fullText.includes('<thinking>')) {
                 const extracted = extractThinking(fullText);
-                thinkingBlocks = [...thinkingBlocks, ...extracted.thinkingBlocks];
                 fullText = extracted.cleanText;
+                // 工具模式下丢弃 thinking，非工具模式保留
+                if (!hasTools && config.enableThinking) {
+                    thinkingBlocks = [...thinkingBlocks, ...extracted.thinkingBlocks];
+                }
             }
 
             if (!isTruncated(fullText)) {
