@@ -107,4 +107,4 @@ export function extractThinking(text: string): ExtractThinkingResult {
  *
  * 与 cursor2api-go 的 thinkingHint 保持一致
  */
-export const THINKING_HINT = `When needed, you may think step-by-step inside <thinking>...</thinking> tags (keep under 3 lines).`;
+export const THINKING_HINT = `You may think through your approach inside <thinking>...</thinking> tags before responding. This thinking will not be shown to the user. Feel free to use it to analyze the request, plan your approach, and reason about the best solution. After </thinking>, write your actual response.`;
