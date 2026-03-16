@@ -1,8 +1,8 @@
-# Cursor2API v2.7
+# Cursor2API v2.7.1
 
 将 Cursor 文档页免费 AI 对话接口代理转换为 **Anthropic Messages API** 和 **OpenAI Chat Completions API**，支持 **Claude Code** 和 **Cursor IDE** 使用。
 
-> ⚠️ **版本说明**：当前 v2.7.0 是基于 v2.5.6 稳定版回滚后精选优化而来，v2.6.x 系列的完整代码可在 [Releases Tags](https://github.com/7836246/cursor2api/tags) 中获取。
+> ⚠️ **版本说明**：当前 v2.7.1 是基于 v2.7.0 优化而来，主要改进压缩算法和安全性。
 
 ## 原理
 
@@ -39,7 +39,9 @@
 - **多层拒绝拦截** - 50+ 正则模式匹配拒绝文本（中英文），自动重试 + 认知重构绕过
 - **三层身份保护** - 身份探针拦截 + 拒绝重试 + 响应清洗，确保输出永远呈现 Claude 身份
 - **截断无缝续写** - Proxy 底层自动拼接被截断的工具响应（最多 6 次），含智能去重
-- **渐进式历史压缩** - 保留最近 6 条消息完整，仅截短早期超长文本
+- **渐进式历史压缩** - 智能识别消息类型，工具调用摘要化、工具结果头尾保留，不破坏 JSON 结构
+- **🆕 可配置压缩系统** - 支持开关 + 3档级别（轻度/中等/激进）+ 自定义参数，环境变量可覆盖
+- **🆕 日志查看器鉴权** - 配置 auth_tokens 后 /logs 页面需登录，token 缓存到 localStorage
 - **Schema 压缩** - 工具定义从完整 JSON Schema (~135k chars) 压缩为紧凑类型签名 (~15k chars)
 - **JSON 感知解析器** - 正确处理 JSON 中嵌入的代码块，五层容错解析
 - **Chrome TLS 指纹** - 模拟真实浏览器请求头
@@ -58,6 +60,8 @@ npm install
 编辑 `config.yaml`：
 - `auth_tokens` - API 鉴权 token 列表（公网部署推荐配置，不配则全部放行）
 - `cursor_model` - 使用的模型（默认 `anthropic/claude-sonnet-4.6`）
+- `compression.enabled` - 压缩开关（默认开启）
+- `compression.level` - 压缩级别 1-3（1=轻度, 2=中等, 3=激进）
 - `proxy` - 全局代理（可选，国内通常不需要）
 - `vision.enabled` - 开启视觉拦截
 - `vision.mode` - 视觉模式：`ocr`（免 Key）或 `api`（外接视觉模型）
@@ -99,6 +103,8 @@ cursor2api/
 │   ├── handler.ts          # Anthropic API 处理器 + 身份保护 + 拒绝拦截 + Thinking
 │   ├── openai-handler.ts   # OpenAI / Cursor IDE 兼容处理器 + response_format + Thinking
 │   ├── openai-types.ts     # OpenAI 类型定义（含 response_format）
+│   ├── log-viewer.ts       # 全链路日志 Web UI + 登录鉴权
+│   ├── logger.ts           # 日志收集 + SSE 推送
 │   ├── proxy-agent.ts      # 代理支持（全局 + Vision 独立代理）
 │   └── tool-fixer.ts       # 工具参数自动修复（字段映射 + 智能引号 + 模糊匹配）
 ├── test/

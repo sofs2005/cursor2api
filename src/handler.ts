@@ -708,8 +708,17 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
         }
 
         // 拒绝检测 + 自动重试（工具模式和非工具模式均生效）
+        // ★ 关键：拒绝检测必须在 thinking-stripped 文本上进行
+        // 否则 thinking 中的反思性语言（如 "haven't given a specific task"）会触发误判
+        const getTextForRefusalCheck = () => {
+            if (fullResponse.includes('<thinking>')) {
+                return fullResponse.replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, '').trim();
+            }
+            return fullResponse;
+        };
         const shouldRetryRefusal = () => {
-            if (!isRefusal(fullResponse)) return false;
+            const textToCheck = getTextForRefusalCheck();
+            if (!isRefusal(textToCheck)) return false;
             if (hasTools && hasToolCalls(fullResponse)) return false;
             return true;
         };
@@ -973,9 +982,10 @@ Continue EXACTLY from where you stopped. DO NOT repeat any content already gener
                 // ★ 仅对短响应或开头明确匹配拒绝模式的响应进行压制
                 // 长响应（如模型在写报告）中可能碰巧包含某个宽泛的拒绝关键词，不应被误判
                 // 截断响应（stopReason=max_tokens）一定不是拒绝
-                const isShortResponse = fullResponse.trim().length < 500;
-                const startsWithRefusal = isRefusal(fullResponse.substring(0, 300));
-                const isActualRefusal = stopReason !== 'max_tokens' && (isShortResponse ? isRefusal(fullResponse) : startsWithRefusal);
+                const strippedResponse = getTextForRefusalCheck();
+                const isShortResponse = strippedResponse.trim().length < 500;
+                const startsWithRefusal = isRefusal(strippedResponse.substring(0, 300));
+                const isActualRefusal = stopReason !== 'max_tokens' && (isShortResponse ? isRefusal(strippedResponse) : startsWithRefusal);
 
                 if (isActualRefusal) {
                     log.info('Handler', 'sanitize', `抑制无工具的完整拒绝响应`, { preview: fullResponse.substring(0, 200) });
@@ -1098,7 +1108,17 @@ async function handleNonStream(res: Response, cursorReq: CursorChatRequest, body
     }
 
     // 拒绝检测 + 自动重试（工具模式和非工具模式均生效）
-    const shouldRetry = () => isRefusal(fullText) && !(hasTools && hasToolCalls(fullText));
+    // ★ 关键：拒绝检测必须在 thinking-stripped 文本上进行
+    const getTextForRefusalCheck = () => {
+        if (fullText.includes('<thinking>')) {
+            return fullText.replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, '').trim();
+        }
+        return fullText;
+    };
+    const shouldRetry = () => {
+        const textToCheck = getTextForRefusalCheck();
+        return isRefusal(textToCheck) && !(hasTools && hasToolCalls(fullText));
+    };
 
     if (shouldRetry()) {
         for (let attempt = 0; attempt < MAX_REFUSAL_RETRIES; attempt++) {
@@ -1289,9 +1309,10 @@ Continue EXACTLY from where you stopped. DO NOT repeat any content already gener
         } else {
             let textToSend = fullText;
             // ★ 同样仅对短响应或开头匹配的进行拒绝压制
-            const isShort = fullText.trim().length < 500;
-            const startsRefusal = isRefusal(fullText.substring(0, 300));
-            const isRealRefusal = stopReason !== 'max_tokens' && (isShort ? isRefusal(fullText) : startsRefusal);
+            const strippedText = getTextForRefusalCheck();
+            const isShort = strippedText.trim().length < 500;
+            const startsRefusal = isRefusal(strippedText.substring(0, 300));
+            const isRealRefusal = stopReason !== 'max_tokens' && (isShort ? isRefusal(strippedText) : startsRefusal);
             if (isRealRefusal) {
                 log.info('Handler', 'sanitize', `非流式抑制纯文本拒绝响应`, { preview: fullText.substring(0, 200) });
                 textToSend = 'Let me proceed with the task.';

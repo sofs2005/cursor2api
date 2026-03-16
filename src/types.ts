@@ -114,6 +114,12 @@ export interface AppConfig {
         model: string;
         proxy?: string;  // vision 独立代理（不影响 Cursor API 直连）
     };
+    compression?: {
+        enabled: boolean;          // 是否启用历史消息压缩
+        level: 1 | 2 | 3;         // 压缩级别: 1=轻度, 2=中等(默认), 3=激进
+        keepRecent: number;        // 保留最近 N 条消息不压缩
+        earlyMsgMaxChars: number;  // 早期消息最大字符数
+    };
     fingerprint: {
         userAgent: string;
     };

@@ -1,5 +1,45 @@
 # Changelog
 
+## v2.7.1 (2026-03-16)
+
+### 🗜️ 智能历史压缩算法
+
+- **修复 JSON Action 块截断**：之前朴素的 `substring` 截断会切断 `` ```json action `` 代码块，产生未闭合标记和不完整 JSON，严重误导模型。现在对包含工具调用的 assistant 消息，提取工具名生成摘要（如 `[Executed: Write, Read]`），不再做子串截断
+- **工具结果头尾保留**：工具结果截断从"只保留头部"改为 **60% 头 + 40% 尾**，确保错误信息、stack trace 等末尾关键内容不丢失
+- **修复非工具模式偏移量**：few-shot 消息跳过偏移量从硬编码 `+2` 改为动态计算 `hasTools ? 2 : 0`，修复非工具模式下前2条消息无法参与压缩的问题
+- **自然边界截断**：普通文本在换行符处截断，避免切断单词或代码
+
+### ⚙️ 可配置压缩系统
+
+- 新增 `compression` 配置段（config.yaml），支持：
+  - `enabled`：压缩开关（`true`/`false`），关闭后所有消息原样保留
+  - `level`：压缩级别 1-3（轻度/中等/激进），每级预设不同的保留消息数和字符限制
+  - `keep_recent`：高级选项，覆盖级别预设的保留消息数
+  - `early_msg_max_chars`：高级选项，覆盖级别预设的早期消息字符上限
+- 支持环境变量 `COMPRESSION_ENABLED` / `COMPRESSION_LEVEL`，方便 Docker 部署
+
+### 🔐 日志查看器鉴权
+
+- 配置了 `auth_tokens` 后，访问 `/logs` 及所有 `/api/logs*` 端点需要验证身份
+- 精美的登录页面，输入 token 后通过 `/api/stats` 验证有效性
+- Token 存入 `localStorage`，刷新页面无需重新输入
+- 支持 query 参数 `?token=xxx`、`Authorization` header、`x-api-key` 三种传入方式
+- 页面右上角显示退出按钮，清除缓存并跳回登录页
+- 未配置 `auth_tokens` 时保持完全开放（向后兼容）
+
+### 🧠 Thinking 拒绝误判修复
+
+- **修复 thinking 触发拒绝检测**：模型的 `<thinking>` 内容中包含反思性语言（如 "haven't given a specific task"），被拒绝检测正则误判为拒绝响应
+- 拒绝检测现在先剥离 `<thinking>` 标签内容，仅对实际输出文本进行检测
+- 流式和非流式路径均已修复
+
+### 🧠 OpenAI 格式 Thinking 默认启用
+
+- OpenAI Chat Completions 协议不再依赖模型名包含 `thinking` 或传入 `reasoning_effort` 才启用
+- 所有 OpenAI 格式请求默认启用 thinking，确保 Claude Code 等客户端始终获得推理内容
+
+---
+
 ## v2.7.0 (2026-03-16)
 
 ### 🔐 API Token 鉴权

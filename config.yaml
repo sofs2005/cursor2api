@@ -26,6 +26,29 @@ timeout: 120
 # Cursor 使用的模型
 cursor_model: "anthropic/claude-sonnet-4.6"
 
+# ==================== 历史消息压缩配置 ====================
+# 对话过长时自动压缩早期消息，释放输出空间，防止 Cursor 上下文溢出
+# 压缩算法会智能识别消息类型，不会破坏工具调用的 JSON 结构
+compression:
+  # 是否启用压缩（true/false），关闭后所有消息原样保留
+  # 环境变量: COMPRESSION_ENABLED=true|false
+  enabled: true
+
+  # 压缩级别: 1=轻度, 2=中等(默认), 3=激进
+  # 环境变量: COMPRESSION_LEVEL=1|2|3
+  # 级别说明:
+  #   1（轻度）: 保留最近 10 条消息，早期消息保留 4000 字符，适合短对话
+  #   2（中等）: 保留最近 6 条消息，早期消息保留 2000 字符，推荐日常使用
+  #   3（激进）: 保留最近 4 条消息，早期消息保留 1000 字符，适合超长对话/大工具集
+  level: 2
+
+  # 以下为高级选项，设置后会覆盖 level 的预设值
+  # 保留最近 N 条消息不压缩（数字越大保留越多上下文）
+  # keep_recent: 6
+
+  # 早期消息最大字符数（超过此长度的消息会被智能压缩）
+  # early_msg_max_chars: 2000
+
 # 浏览器指纹配置
 fingerprint:
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"

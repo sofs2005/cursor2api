@@ -45,6 +45,16 @@ export function getConfig(): AppConfig {
                     ? yaml.auth_tokens.map(String)
                     : String(yaml.auth_tokens).split(',').map((s: string) => s.trim()).filter(Boolean);
             }
+            // ★ 历史压缩配置
+            if (yaml.compression !== undefined) {
+                const c = yaml.compression;
+                config.compression = {
+                    enabled: c.enabled !== false, // 默认启用
+                    level: [1, 2, 3].includes(c.level) ? c.level : 2,
+                    keepRecent: typeof c.keep_recent === 'number' ? c.keep_recent : 6,
+                    earlyMsgMaxChars: typeof c.early_msg_max_chars === 'number' ? c.early_msg_max_chars : 2000,
+                };
+            }
         } catch (e) {
             console.warn('[Config] 读取 config.yaml 失败:', e);
         }
@@ -57,6 +67,16 @@ export function getConfig(): AppConfig {
     if (process.env.CURSOR_MODEL) config.cursorModel = process.env.CURSOR_MODEL;
     if (process.env.AUTH_TOKEN) {
         config.authTokens = process.env.AUTH_TOKEN.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    // 压缩环境变量覆盖
+    if (process.env.COMPRESSION_ENABLED !== undefined) {
+        if (!config.compression) config.compression = { enabled: true, level: 2, keepRecent: 6, earlyMsgMaxChars: 2000 };
+        config.compression.enabled = process.env.COMPRESSION_ENABLED !== 'false' && process.env.COMPRESSION_ENABLED !== '0';
+    }
+    if (process.env.COMPRESSION_LEVEL) {
+        if (!config.compression) config.compression = { enabled: true, level: 2, keepRecent: 6, earlyMsgMaxChars: 2000 };
+        const lvl = parseInt(process.env.COMPRESSION_LEVEL);
+        if (lvl >= 1 && lvl <= 3) config.compression.level = lvl as 1 | 2 | 3;
     }
 
     // 从 base64 FP 环境变量解析指纹

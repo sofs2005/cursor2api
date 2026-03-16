@@ -11,7 +11,7 @@ import express from 'express';
 import { getConfig } from './config.js';
 import { handleMessages, listModels, countTokens } from './handler.js';
 import { handleOpenAIChatCompletions, handleOpenAIResponses } from './openai-handler.js';
-import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetPayload, apiLogsStream } from './log-viewer.js';
+import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetPayload, apiLogsStream, serveLogViewerLogin } from './log-viewer.js';
 
 // 从 package.json 读取版本号，统一来源，避免多处硬编码
 const require = createRequire(import.meta.url);
@@ -36,13 +36,35 @@ app.use((_req, res, next) => {
     next();
 });
 
-// ★ 日志查看器（在鉴权之前，始终可访问）
-app.get('/logs', serveLogViewer);
-app.get('/api/logs', apiGetLogs);
-app.get('/api/requests', apiGetRequests);
-app.get('/api/stats', apiGetStats);
-app.get('/api/payload/:requestId', apiGetPayload);
-app.get('/api/logs/stream', apiLogsStream);
+// ★ 日志查看器鉴权中间件：配置了 authTokens 时需要验证
+const logViewerAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const tokens = config.authTokens;
+    if (!tokens || tokens.length === 0) return next(); // 未配置 token 则放行
+
+    // 支持多种传入方式: query ?token=xxx, Authorization header, x-api-key header
+    const tokenFromQuery = req.query.token as string | undefined;
+    const authHeader = req.headers['authorization'] || req.headers['x-api-key'];
+    const tokenFromHeader = authHeader ? String(authHeader).replace(/^Bearer\s+/i, '').trim() : undefined;
+    const token = tokenFromQuery || tokenFromHeader;
+
+    if (!token || !tokens.includes(token)) {
+        // HTML 页面请求 → 返回登录页; API 请求 → 返回 JSON 错误
+        if (req.path === '/logs') {
+            return serveLogViewerLogin(req, res);
+        }
+        res.status(401).json({ error: { message: 'Unauthorized. Provide token via ?token=xxx or Authorization header.', type: 'auth_error' } });
+        return;
+    }
+    next();
+};
+
+// ★ 日志查看器路由（带鉴权）
+app.get('/logs', logViewerAuth, serveLogViewer);
+app.get('/api/logs', logViewerAuth, apiGetLogs);
+app.get('/api/requests', logViewerAuth, apiGetRequests);
+app.get('/api/stats', logViewerAuth, apiGetStats);
+app.get('/api/payload/:requestId', logViewerAuth, apiGetPayload);
+app.get('/api/logs/stream', logViewerAuth, apiLogsStream);
 
 // ★ API 鉴权中间件：配置了 authTokens 则需要 Bearer token
 app.use((req, res, next) => {

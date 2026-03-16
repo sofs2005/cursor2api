@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "mcp__filesystem__read_text_file",
-      "WebSearch"
+      "WebSearch",
+      "Bash(findstr:*)"
     ]
   }
 }

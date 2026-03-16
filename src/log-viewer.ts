@@ -59,6 +59,77 @@ export function serveLogViewer(_req: Request, res: Response): void {
     res.send(LOG_VIEWER_HTML);
 }
 
+export function serveLogViewerLogin(_req: Request, res: Response): void {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(LOGIN_HTML);
+}
+
+// ==================== Login Page HTML ====================
+
+const LOGIN_HTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cursor2API - 登录</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:#080c14;color:#e2e8f0;height:100vh;display:flex;align-items:center;justify-content:center}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(600px 400px at 50% 40%,rgba(59,130,246,.08),transparent 70%),radial-gradient(400px 300px at 70% 70%,rgba(139,92,246,.06),transparent 70%);pointer-events:none}
+.card{position:relative;z-index:1;width:380px;padding:40px;background:rgba(15,21,32,.95);border:1px solid rgba(30,58,95,.6);border-radius:16px;backdrop-filter:blur(20px);box-shadow:0 25px 50px rgba(0,0,0,.4)}
+.logo{text-align:center;margin-bottom:28px}
+.logo h1{font-size:22px;font-weight:700;background:linear-gradient(135deg,#06b6d4,#3b82f6,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo p{font-size:12px;color:#64748b;margin-top:6px}
+.field{margin-bottom:20px}
+.field label{display:block;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.field input{width:100%;padding:10px 14px;font-size:13px;background:#0f1520;border:1px solid #1e3a5f;border-radius:8px;color:#e2e8f0;outline:none;font-family:'JetBrains Mono',monospace;transition:border-color .2s}
+.field input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.field input::placeholder{color:#475569}
+.btn{width:100%;padding:10px;font-size:13px;font-weight:600;background:linear-gradient(135deg,#3b82f6,#8b5cf6);border:none;border-radius:8px;color:#fff;cursor:pointer;transition:opacity .2s,transform .1s}
+.btn:hover{opacity:.9}.btn:active{transform:scale(.98)}
+.err{margin-top:12px;padding:8px 12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:6px;font-size:11px;color:#ef4444;display:none;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>⚡ Cursor2API</h1>
+    <p>日志查看器需要验证身份</p>
+  </div>
+  <div class="field">
+    <label>Auth Token</label>
+    <input type="password" id="tokenIn" placeholder="sk-your-token..." autofocus />
+  </div>
+  <button class="btn" onclick="doLogin()">登录</button>
+  <div class="err" id="errMsg">Token 无效，请检查后重试</div>
+</div>
+<script>
+// 检查 localStorage 是否已有 token，自动尝试登录
+const saved = localStorage.getItem('cursor2api_token');
+if (saved) {
+  window.location.href = '/logs?token=' + encodeURIComponent(saved);
+}
+document.getElementById('tokenIn').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+async function doLogin() {
+  const token = document.getElementById('tokenIn').value.trim();
+  if (!token) return;
+  try {
+    const r = await fetch('/api/stats?token=' + encodeURIComponent(token));
+    if (r.ok) {
+      localStorage.setItem('cursor2api_token', token);
+      window.location.href = '/logs?token=' + encodeURIComponent(token);
+    } else {
+      document.getElementById('errMsg').style.display = 'block';
+    }
+  } catch {
+    document.getElementById('errMsg').style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>`;
+
 // ==================== HTML ====================
 
 const LOG_VIEWER_HTML = `<!DOCTYPE html>
@@ -274,19 +345,36 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(600px 
 let reqs=[],rmap={},logs=[],selId=null,cFil='all',cLv='all',sq='',curTab='logs',curPayload=null;
 const PC={receive:'var(--blue)',convert:'var(--cyan)',send:'var(--purple)',response:'var(--purple)',thinking:'#a855f7',refusal:'var(--yellow)',retry:'var(--yellow)',truncation:'var(--yellow)',continuation:'var(--yellow)',toolparse:'var(--orange)',sanitize:'var(--orange)',stream:'var(--green)',complete:'var(--green)',error:'var(--red)',intercept:'var(--pink)',auth:'var(--t3)'};
 
+// ★ Token 管理：从 URL 参数获取并存入 localStorage
+const urlToken = new URLSearchParams(window.location.search).get('token');
+if (urlToken) localStorage.setItem('cursor2api_token', urlToken);
+const authToken = localStorage.getItem('cursor2api_token') || '';
+function authQ(base) { return authToken ? (base.includes('?') ? base + '&token=' : base + '?token=') + encodeURIComponent(authToken) : base; }
+function logoutBtn() {
+  if (authToken) {
+    const b = document.createElement('button');
+    b.textContent = '退出';
+    b.style.cssText = 'padding:2px 10px;font-size:10px;background:transparent;border:1px solid var(--bdr);border-radius:6px;color:var(--t2);cursor:pointer';
+    b.onclick = () => { localStorage.removeItem('cursor2api_token'); window.location.href = '/logs'; };
+    document.querySelector('.hdr-r').prepend(b);
+  }
+}
+
 async function init(){
   try{
-    const[a,b]=await Promise.all([fetch('/api/requests?limit=100'),fetch('/api/logs?limit=500')]);
+    const[a,b]=await Promise.all([fetch(authQ('/api/requests?limit=100')),fetch(authQ('/api/logs?limit=500'))]);
+    if (a.status === 401) { localStorage.removeItem('cursor2api_token'); window.location.href = '/logs'; return; }
     reqs=await a.json();logs=await b.json();rmap={};reqs.forEach(r=>rmap[r.requestId]=r);
     renderRL();updCnt();updStats();
   }catch(e){console.error(e)}
   connectSSE();
+  logoutBtn();
 }
 
 let es;
 function connectSSE(){
   if(es)try{es.close()}catch{}
-  es=new EventSource('/api/logs/stream');
+  es=new EventSource(authQ('/api/logs/stream'));
   es.addEventListener('log',e=>{const en=JSON.parse(e.data);logs.push(en);if(logs.length>5000)logs=logs.slice(-3000);if(!selId||selId===en.requestId){if(curTab==='logs')appendLog(en)}});
   es.addEventListener('summary',e=>{const s=JSON.parse(e.data);const isNew=!rmap[s.requestId];rmap[s.requestId]=s;const i=reqs.findIndex(r=>r.requestId===s.requestId);if(i>=0)reqs[i]=s;else reqs.unshift(s);renderRL();updCnt();if(selId===s.requestId)renderSCard(s)});
   es.addEventListener('stats',e=>{applyStats(JSON.parse(e.data))});
@@ -294,7 +382,7 @@ function connectSSE(){
   es.onerror=()=>{const c=document.getElementById('conn');c.className='conn off';c.querySelector('span').textContent='重连中...';setTimeout(connectSSE,3000)};
 }
 
-function updStats(){fetch('/api/stats').then(r=>r.json()).then(applyStats).catch(()=>{})}
+function updStats(){fetch(authQ('/api/stats')).then(r=>r.json()).then(applyStats).catch(()=>{})}
 function applyStats(s){document.getElementById('sT').textContent=s.totalRequests;document.getElementById('sS').textContent=s.successCount;document.getElementById('sE').textContent=s.errorCount;document.getElementById('sA').textContent=s.avgResponseTime||'-';document.getElementById('sF').textContent=s.avgTTFT||'-'}
 
 function updCnt(){
@@ -329,7 +417,7 @@ async function selReq(id){
   document.getElementById('tabs').style.display='flex';
   curTab='logs';setTab('logs',document.querySelector('.tab'));
   // Load payload data
-  try{const r=await fetch('/api/payload/'+id);if(r.ok)curPayload=await r.json();else curPayload=null}catch{curPayload=null}
+  try{const r=await fetch(authQ('/api/payload/'+id));if(r.ok)curPayload=await r.json();else curPayload=null}catch{curPayload=null}
   // Render log tab
   const ll=logs.filter(l=>l.requestId===id);renderLogs(ll);
 }

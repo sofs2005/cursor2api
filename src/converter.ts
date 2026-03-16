@@ -345,20 +345,78 @@ export async function convertToCursorRequest(req: AnthropicRequest): Promise<Cur
         }
     }
 
-    // ★ 渐进式历史压缩（替代之前全删的智能压缩）
-    // 策略：保留最近 KEEP_RECENT 条消息完整，仅压缩早期消息中的超长文本
-    // 这不会丢失消息结构（不删消息），只缩短单条消息的文本，兼顾上下文完整性和输出空间
-    const KEEP_RECENT = 6; // 保留最近6条消息不压缩
-    const EARLY_MSG_MAX_CHARS = 2000; // 早期消息的最大字符数
-    if (messages.length > KEEP_RECENT + 2) { // +2 for few-shot messages
-        const compressEnd = messages.length - KEEP_RECENT;
-        for (let i = 2; i < compressEnd; i++) { // 从 index 2 开始跳过 few-shot
-            const msg = messages[i];
-            for (const part of msg.parts) {
-                if (part.text && part.text.length > EARLY_MSG_MAX_CHARS) {
+    // ★ 渐进式历史压缩（智能压缩，不破坏结构）
+    // 可通过 config.yaml 的 compression 配置控制开关和级别
+    // 策略：保留最近 KEEP_RECENT 条消息完整，对早期消息进行结构感知压缩
+    // - 包含 json action 块的 assistant 消息 → 摘要替代（防止截断 JSON 导致解析错误）
+    // - 工具结果消息 → 头尾保留（错误信息经常在末尾）
+    // - 普通文本 → 在自然边界处截断
+    const compressionConfig = config.compression ?? { enabled: true, level: 2 as const, keepRecent: 6, earlyMsgMaxChars: 2000 };
+    if (compressionConfig.enabled) {
+        // ★ 压缩级别参数映射：
+        // Level 1（轻度）: 保留更多消息和更多字符
+        // Level 2（中等）: 默认平衡模式
+        // Level 3（激进）: 极度压缩，最大化输出空间
+        const levelParams = {
+            1: { keepRecent: 10, maxChars: 4000, briefTextLen: 800 },  // 轻度
+            2: { keepRecent: 6,  maxChars: 2000, briefTextLen: 500 },  // 中等（默认）
+            3: { keepRecent: 4,  maxChars: 1000, briefTextLen: 200 },  // 激进
+        };
+        const lp = levelParams[compressionConfig.level] || levelParams[2];
+
+        // 用户自定义值覆盖级别预设
+        const KEEP_RECENT = compressionConfig.keepRecent ?? lp.keepRecent;
+        const EARLY_MSG_MAX_CHARS = compressionConfig.earlyMsgMaxChars ?? lp.maxChars;
+        const BRIEF_TEXT_LEN = lp.briefTextLen;
+
+        const fewShotOffset = hasTools ? 2 : 0; // 工具模式有2条 few-shot 消息需跳过
+        if (messages.length > KEEP_RECENT + fewShotOffset) {
+            const compressEnd = messages.length - KEEP_RECENT;
+            for (let i = fewShotOffset; i < compressEnd; i++) {
+                const msg = messages[i];
+                for (const part of msg.parts) {
+                    if (!part.text || part.text.length <= EARLY_MSG_MAX_CHARS) continue;
                     const originalLen = part.text.length;
-                    part.text = part.text.substring(0, EARLY_MSG_MAX_CHARS) +
-                        `\n\n... [truncated ${originalLen - EARLY_MSG_MAX_CHARS} chars for context budget]`;
+
+                    // ★ 包含工具调用的 assistant 消息：提取工具名摘要，不做子串截断
+                    // 截断 JSON action 块会产生未闭合的 ``` 和不完整 JSON，严重误导模型
+                    if (msg.role === 'assistant' && part.text.includes('```json')) {
+                        const toolSummaries: string[] = [];
+                        const toolPattern = /```json\s+action\s*\n\s*\{[\s\S]*?"tool"\s*:\s*"([^"]+)"[\s\S]*?```/g;
+                        let tm;
+                        while ((tm = toolPattern.exec(part.text)) !== null) {
+                            toolSummaries.push(tm[1]);
+                        }
+                        // 提取工具调用之外的纯文本（思考、解释等），按级别保留不同长度
+                        const plainText = part.text.replace(/```json\s+action[\s\S]*?```/g, '').trim();
+                        const briefText = plainText.length > BRIEF_TEXT_LEN ? plainText.substring(0, BRIEF_TEXT_LEN) + '...' : plainText;
+                        const summary = toolSummaries.length > 0
+                            ? `${briefText}\n\n[Executed: ${toolSummaries.join(', ')}] (${originalLen} chars compressed)`
+                            : briefText + `\n\n... [${originalLen} chars compressed]`;
+                        part.text = summary;
+                        continue;
+                    }
+
+                    // ★ 工具结果（user 消息含 "Action output:"）：头尾保留
+                    // 错误信息、命令输出的关键内容经常出现在末尾
+                    if (msg.role === 'user' && /Action (?:output|error)/i.test(part.text)) {
+                        const headBudget = Math.floor(EARLY_MSG_MAX_CHARS * 0.6);
+                        const tailBudget = EARLY_MSG_MAX_CHARS - headBudget;
+                        const omitted = originalLen - headBudget - tailBudget;
+                        part.text = part.text.substring(0, headBudget) +
+                            `\n\n... [${omitted} chars omitted] ...\n\n` +
+                            part.text.substring(originalLen - tailBudget);
+                        continue;
+                    }
+
+                    // ★ 普通文本：在自然边界（换行符）处截断，避免切断单词或代码
+                    let cutPos = EARLY_MSG_MAX_CHARS;
+                    const lastNewline = part.text.lastIndexOf('\n', EARLY_MSG_MAX_CHARS);
+                    if (lastNewline > EARLY_MSG_MAX_CHARS * 0.7) {
+                        cutPos = lastNewline; // 在最近的换行符处截断
+                    }
+                    part.text = part.text.substring(0, cutPos) +
+                        `\n\n... [truncated ${originalLen - cutPos} chars for context budget]`;
                 }
             }
         }
@@ -426,11 +484,16 @@ function extractToolResultNatural(msg: AnthropicMessage): string {
                 continue;
             }
 
-            // ★ 动态截断：根据当前上下文大小计算预算
+            // ★ 动态截断：根据当前上下文大小计算预算，使用头尾保留策略
+            // 头部保留 60%，尾部保留 40%（错误信息、文件末尾内容经常很重要）
             const budget = getCurrentToolResultBudget();
             if (resultText.length > budget) {
-                const truncated = resultText.slice(0, budget);
-                resultText = truncated + `\n\n... (truncated, ${resultText.length} → ${budget} chars, context=${_currentContextChars})`;
+                const headBudget = Math.floor(budget * 0.6);
+                const tailBudget = budget - headBudget;
+                const omitted = resultText.length - headBudget - tailBudget;
+                resultText = resultText.slice(0, headBudget) +
+                    `\n\n... [${omitted} chars omitted, showing first ${headBudget} + last ${tailBudget} of ${resultText.length} chars] ...\n\n` +
+                    resultText.slice(-tailBudget);
             }
 
             if (block.is_error) {
