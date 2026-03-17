@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'fs';
 import { parse as parseYaml } from 'yaml';
-import type { AppConfig, VisionProvider } from './types.js';
+import type { AppConfig } from './types.js';
 
 let config: AppConfig;
 
@@ -12,7 +12,6 @@ export function getConfig(): AppConfig {
         port: 3010,
         timeout: 120,
         cursorModel: 'anthropic/claude-sonnet-4.6',
-        enableThinking: true,
         fingerprint: {
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
         },
@@ -27,40 +26,58 @@ export function getConfig(): AppConfig {
             if (yaml.timeout) config.timeout = yaml.timeout;
             if (yaml.proxy) config.proxy = yaml.proxy;
             if (yaml.cursor_model) config.cursorModel = yaml.cursor_model;
-            if (yaml.enable_thinking !== undefined) config.enableThinking = yaml.enable_thinking;
-            if (yaml.enable_summary !== undefined) config.enableSummary = yaml.enable_summary;
-            if (yaml.enable_progressive_truncation !== undefined) config.enableProgressiveTruncation = yaml.enable_progressive_truncation;
             if (yaml.fingerprint) {
                 if (yaml.fingerprint.user_agent) config.fingerprint.userAgent = yaml.fingerprint.user_agent;
             }
             if (yaml.vision) {
-                // Parse providers array
-                let providers: VisionProvider[] = [];
-                if (Array.isArray(yaml.vision.providers)) {
-                    providers = yaml.vision.providers.map((p: any) => ({
-                        name: p.name || '',
-                        baseUrl: p.base_url || 'https://api.openai.com/v1/chat/completions',
-                        apiKey: p.api_key || '',
-                        model: p.model || 'gpt-4o-mini',
-                    }));
-                } else if (yaml.vision.base_url && yaml.vision.api_key) {
-                    // Backward compat: single provider from legacy fields
-                    providers = [{
-                        name: 'default',
-                        baseUrl: yaml.vision.base_url,
-                        apiKey: yaml.vision.api_key,
-                        model: yaml.vision.model || 'gpt-4o-mini',
-                    }];
-                }
-
                 config.vision = {
                     enabled: yaml.vision.enabled !== false,
                     mode: yaml.vision.mode || 'ocr',
-                    providers,
-                    fallbackToOcr: yaml.vision.fallback_to_ocr !== false, // default true
                     baseUrl: yaml.vision.base_url || 'https://api.openai.com/v1/chat/completions',
                     apiKey: yaml.vision.api_key || '',
                     model: yaml.vision.model || 'gpt-4o-mini',
+                    proxy: yaml.vision.proxy || undefined,
+                };
+            }
+            // ★ API 鉴权 token
+            if (yaml.auth_tokens) {
+                config.authTokens = Array.isArray(yaml.auth_tokens)
+                    ? yaml.auth_tokens.map(String)
+                    : String(yaml.auth_tokens).split(',').map((s: string) => s.trim()).filter(Boolean);
+            }
+            // ★ 历史压缩配置
+            if (yaml.compression !== undefined) {
+                const c = yaml.compression;
+                config.compression = {
+                    enabled: c.enabled !== false, // 默认启用
+                    level: [1, 2, 3].includes(c.level) ? c.level : 2,
+                    keepRecent: typeof c.keep_recent === 'number' ? c.keep_recent : 6,
+                    earlyMsgMaxChars: typeof c.early_msg_max_chars === 'number' ? c.early_msg_max_chars : 2000,
+                };
+            }
+            // ★ Thinking 开关（最高优先级）
+            if (yaml.thinking !== undefined) {
+                config.thinking = {
+                    enabled: yaml.thinking.enabled !== false, // 默认启用
+                };
+            }
+            // ★ 日志文件持久化
+            if (yaml.logging !== undefined) {
+                config.logging = {
+                    file_enabled: yaml.logging.file_enabled === true, // 默认关闭
+                    dir: yaml.logging.dir || './logs',
+                    max_days: typeof yaml.logging.max_days === 'number' ? yaml.logging.max_days : 7,
+                };
+            }
+            // ★ 工具处理配置
+            if (yaml.tools !== undefined) {
+                const t = yaml.tools;
+                const validModes = ['compact', 'full', 'names_only'];
+                config.tools = {
+                    schemaMode: validModes.includes(t.schema_mode) ? t.schema_mode : 'compact',
+                    descriptionMaxLength: typeof t.description_max_length === 'number' ? t.description_max_length : 50,
+                    includeOnly: Array.isArray(t.include_only) ? t.include_only.map(String) : undefined,
+                    exclude: Array.isArray(t.exclude) ? t.exclude.map(String) : undefined,
                 };
             }
         } catch (e) {
@@ -73,9 +90,34 @@ export function getConfig(): AppConfig {
     if (process.env.TIMEOUT) config.timeout = parseInt(process.env.TIMEOUT);
     if (process.env.PROXY) config.proxy = process.env.PROXY;
     if (process.env.CURSOR_MODEL) config.cursorModel = process.env.CURSOR_MODEL;
-    if (process.env.ENABLE_THINKING !== undefined) config.enableThinking = process.env.ENABLE_THINKING !== 'false';
-    if (process.env.ENABLE_SUMMARY !== undefined) config.enableSummary = process.env.ENABLE_SUMMARY === 'true';
-    if (process.env.ENABLE_PROGRESSIVE_TRUNCATION !== undefined) config.enableProgressiveTruncation = process.env.ENABLE_PROGRESSIVE_TRUNCATION !== 'false';
+    if (process.env.AUTH_TOKEN) {
+        config.authTokens = process.env.AUTH_TOKEN.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    // 压缩环境变量覆盖
+    if (process.env.COMPRESSION_ENABLED !== undefined) {
+        if (!config.compression) config.compression = { enabled: true, level: 2, keepRecent: 6, earlyMsgMaxChars: 2000 };
+        config.compression.enabled = process.env.COMPRESSION_ENABLED !== 'false' && process.env.COMPRESSION_ENABLED !== '0';
+    }
+    if (process.env.COMPRESSION_LEVEL) {
+        if (!config.compression) config.compression = { enabled: true, level: 2, keepRecent: 6, earlyMsgMaxChars: 2000 };
+        const lvl = parseInt(process.env.COMPRESSION_LEVEL);
+        if (lvl >= 1 && lvl <= 3) config.compression.level = lvl as 1 | 2 | 3;
+    }
+    // Thinking 环境变量覆盖（最高优先级）
+    if (process.env.THINKING_ENABLED !== undefined) {
+        config.thinking = {
+            enabled: process.env.THINKING_ENABLED !== 'false' && process.env.THINKING_ENABLED !== '0',
+        };
+    }
+    // Logging 环境变量覆盖
+    if (process.env.LOG_FILE_ENABLED !== undefined) {
+        if (!config.logging) config.logging = { file_enabled: false, dir: './logs', max_days: 7 };
+        config.logging.file_enabled = process.env.LOG_FILE_ENABLED === 'true' || process.env.LOG_FILE_ENABLED === '1';
+    }
+    if (process.env.LOG_DIR) {
+        if (!config.logging) config.logging = { file_enabled: false, dir: './logs', max_days: 7 };
+        config.logging.dir = process.env.LOG_DIR;
+    }
 
     // 从 base64 FP 环境变量解析指纹
     if (process.env.FP) {

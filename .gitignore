@@ -15,6 +15,7 @@ node_modules/
 # IDE
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 
@@ -35,7 +36,8 @@ dist/
 build/
 *.traineddata
 
-# Debug / temp files
-debug_payload.js
-last_payload.json
-*.debug.json
+# Config (contains sensitive tokens, use config.yaml.example as template)
+config.yaml
+
+# Screenshots (dev artifacts)
+*.png

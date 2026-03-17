@@ -3,12 +3,7 @@
     "allow": [
       "mcp__filesystem__read_text_file",
       "WebSearch",
-      "mcp__filesystem__directory_tree",
-      "mcp__fetch__fetch",
-      "Bash(find:*)",
-      "WebFetch(domain:www.weather.com.cn)",
-      "WebFetch(domain:wttr.in)",
-      "Bash(chmod:*)"
+      "Bash(findstr:*)"
     ]
   }
 }

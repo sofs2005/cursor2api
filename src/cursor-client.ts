@@ -57,9 +57,8 @@ export async function sendCursorRequest(
             return;
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[Cursor] 请求失败 (${attempt}/${maxRetries}): ${msg}`);
+            console.error(`[Cursor] 请求失败 (${attempt}/${maxRetries}): ${msg.substring(0, 100)}`);
             if (attempt < maxRetries) {
-                console.log(`[Cursor] 2s 后重试...`);
                 await new Promise(r => setTimeout(r, 2000));
             } else {
                 throw err;
@@ -74,7 +73,7 @@ async function sendCursorRequestInner(
 ): Promise<void> {
     const headers = getChromeHeaders();
 
-    console.log(`[Cursor] 发送请求: model=${req.model}, messages=${req.messages.length}`);
+    // 详细日志记录在 handler 层
 
     const config = getConfig();
     const controller = new AbortController();

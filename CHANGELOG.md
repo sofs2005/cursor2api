@@ -1,132 +1,131 @@
 # Changelog
 
-## v2.6.5 (2026-03-15)
+## v2.7.2 (2026-03-17)
 
-### 🔧 流式 Thinking Block 类型冲突修复
+### 🖥️ 日志查看器全面升级
 
-- **问题**：流式传输时 `<thinking>` 标签可能不在第一个 delta 中完整出现，导致部分标签片段（`<`, `<th`...）先作为 `text_delta` 发送，之后再发 `thinking_delta`，客户端报错 "Mismatched content block type content_block_delta text"
-- **修复**：thinking 启用时完全缓冲响应（不做内联流式），由后处理统一保证 `thinking → text` 正确顺序
-- thinking 未启用时增加 50 字符检测缓冲，避免意外 `<thinking>` 标签被当作文本发送
+- **前端重构为独立静态文件**：`logs.html` / `logs.css` / `logs.js` 分离到 `public/` 目录，告别单文件嵌入，更易维护
+- **🌙 日/夜主题切换**：一键切换明暗主题（☀️/🌙），自动检测系统偏好，选择持久化到 `localStorage`
+- **暗色主题完整适配**：深蓝渐变背景，所有 UI 元素（标签、状态灯、代码块、JSON 高亮）均有独立暗色配色
+- **标题提取修复**：过滤 `<system-reminder>...</system-reminder>` 注入内容和 Claude Code `"First, think step by step..."` 引导语，确保标题显示用户真实提问
+- **登录页同步更新**：独立 `login.html`，视觉风格与日志页一致
 
-### 🔧 多 Thinking Block 合并
+### 🧹 工程化改进
 
-- **问题**：模型可能输出多个 `<thinking>...</thinking>` 块，或截断恢复追加新 thinking 块，导致发送多个独立 thinking content block，违反 Anthropic API 规范
-- **修复**：流式和非流式路径均将多个 thinking 块合并为单个 thinking content block
+- **移除 `WELL_KNOWN_TOOLS` 白名单**：所有工具统一保留描述（截取前 50 字符），简化逻辑
+- **`config.yaml` 停止追踪**：含敏感 token 的配置文件加入 `.gitignore`，不再上传
+- **新增 `config.yaml.example`**：配置模板，安全默认值，用户只需 `cp config.yaml.example config.yaml`
+- **`.gitignore` 清理**：去除重复条目，排除开发截图文件
+- **Thinking 默认关闭**：`thinking.enabled` 默认值改为 `false`
+- **Express v5 兼容**：修复 `path-to-regexp` 通配符路由报错，改用 `express.static` 中间件
+- **CSS 兼容性**：补充标准 `background-clip` 属性
 
-### 🛡️ 反拒绝策略重构 — 从 "Testing Assistant" 到中性工作区动作
+### 📝 README 大幅更新
 
-- **问题**：Sonnet 4.6 将整个 "Cursor Automated Testing Assistant" / "sandbox execution" 叙事识别为 jailbreak pattern，直接拒绝
-- **策略重构**：
-  - 移除所有身份声明（不再 "You are X"）
-  - 移除所有胁迫性语言（"Do NOT apologize"）
-  - 工具格式从 "test scenario" 改为中性 "workspace action"
-  - 工具结果标签从 "Sandbox Execution Result" 改为 "Action Result"
-  - 系统提示词清洗从身份替换改为身份删除（Sonnet 4.6 会把任何 "You are X" 替换识别为 jailbreak）
-
-### 🔒 XOR 混淆替代 Base64
-
-- **问题**：Base64 编码的注入字符串可被模型心算解码，实际防护价值为零
-- **新方案**：16 字节轮转密钥 XOR 加密，模型无法心算解码
-- 新增 `src/obfuscate.ts` 解码模块 + `scripts/encode.mjs` 编码工具
-- 所有敏感提示词字符串迁移至 XOR 编码
-
-### 🧹 子 Agent 清洗增强
-
-- 新增 `<claude_background_info>` 和 `<env>` 标签到 Tier 1 完全剥离列表
-- 撇号兼容：同时匹配 ASCII `'` (U+0027) 和 Unicode `'` (U+2019)
-- 全局清洗兜底：通杀残留 Claude/Anthropic/Claude Code 引用
+- 新增日志查看器功能介绍（特性列表 + 鉴权说明）
+- 新增配置项速查表格
+- 新增环境变量参考表
+- 项目结构补充 `public/` 目录说明
+- 配置说明改为引导用户从 `config.yaml.example` 复制
 
 ---
 
-## v2.6.4 (2026-03-15)
+## v2.7.1 (2026-03-16)
 
-### 🧹 系统提示词深度清洗 — 根治 Prompt Injection 检测
+### 🗜️ 智能历史压缩算法
 
-- **问题**：Claude Sonnet 4.6+ 将转发的 Claude Code 系统提示词中的 `<identity>`、`<skills>` 等 XML 标签识别为"另一个 AI 的系统提示词注入"，触发拒绝
-- **新增 `sanitizeSystemPrompt()`**：两级标签处理策略
-  - **Tier 1 完全剥离**：`<identity>`、`<tool_calling>`、`<communication_style>`、`<knowledge_discovery>`、`<persistent_context>` 等纯 AI 行为规则标签 — 连同内容整体删除
-  - **Tier 2 去壳保留**：`<user_information>`、`<user_rules>`、`<artifacts>`、`<mcp_servers>` 等项目上下文标签 — 仅删 XML 壳，保留有用内容
-- 清除 `x-anthropic-billing-header` 等会被模型判定为恶意伪造的计费头
-- 残留身份定义语句（"made by Anthropic"、"pair programming"）正则清理
+- **修复 JSON Action 块截断**：之前朴素的 `substring` 截断会切断 `` ```json action `` 代码块，产生未闭合标记和不完整 JSON，严重误导模型。现在对包含工具调用的 assistant 消息，提取工具名生成摘要（如 `[Executed: Write, Read]`），不再做子串截断
+- **工具结果头尾保留**：工具结果截断从"只保留头部"改为 **60% 头 + 40% 尾**，确保错误信息、stack trace 等末尾关键内容不丢失
+- **修复非工具模式偏移量**：few-shot 消息跳过偏移量从硬编码 `+2` 改为动态计算 `hasTools ? 2 : 0`，修复非工具模式下前2条消息无法参与压缩的问题
+- **自然边界截断**：普通文本在换行符处截断，避免切断单词或代码
 
-### 🎭 认知重构升级 — 从"文档助手"到"自动化测试助手"
+### ⚙️ 可配置压缩系统
 
-- **策略升级**：由 v2.6.3 的"写文档生成 JSON 示例"改为"自动化测试沙盒执行"框架
-  - 模型被引导为 **Cursor Automated Testing Assistant**，所有工具调用被包装为"沙盒执行测试步骤"
-  - 工具结果标记从 `Action output:` 改为 `[Sandbox Execution Result - Success/Error]`
-  - 续写引导从 "continue with next action" 改为 "continue the automated test scenario"
-- **Base64 编码敏感字符串**：所有提示词注入相关的关键文本均 Base64 编码，防止 AI 分析自身代码时识别注入模式
-- **首条/末条消息差异化**：首条用户消息注入测试场景描述，末条消息追加执行引导
+- 新增 `compression` 配置段（config.yaml），支持：
+  - `enabled`：压缩开关（`true`/`false`），关闭后所有消息原样保留
+  - `level`：压缩级别 1-3（轻度/中等/激进），每级预设不同的保留消息数和字符限制
+  - `keep_recent`：高级选项，覆盖级别预设的保留消息数
+  - `early_msg_max_chars`：高级选项，覆盖级别预设的早期消息字符上限
+- 支持环境变量 `COMPRESSION_ENABLED` / `COMPRESSION_LEVEL`，方便 Docker 部署
 
-### 📋 用户消息 XML 标签两级处理
+### 🔐 日志查看器鉴权
 
-- 与系统提示词清洗策略一致：`<system-reminder>`、`<ephemeral_message>` 等 Tier 1 标签完全丢弃
-- `<user_information>` 等 Tier 2 标签仅去壳保留内容，确保模型仍能获取项目上下文
-- 新增诊断日志：输出每条用户消息的 XML 标签分析结果
+- 配置了 `auth_tokens` 后，访问 `/logs` 及所有 `/api/logs*` 端点需要验证身份
+- 精美的登录页面，输入 token 后通过 `/api/stats` 验证有效性
+- Token 存入 `localStorage`，刷新页面无需重新输入
+- 支持 query 参数 `?token=xxx`、`Authorization` header、`x-api-key` 三种传入方式
+- 页面右上角显示退出按钮，清除缓存并跳回登录页
+- 未配置 `auth_tokens` 时保持完全开放（向后兼容）
 
-### 📄 README 精简
+### 🧠 Thinking 拒绝误判修复
 
-- 移除内联更新日志（独立 CHANGELOG.md 维护）
-- 移除项目结构树（减少维护成本）
-- 移除 ASCII 架构图
+- **修复 thinking 触发拒绝检测**：模型的 `<thinking>` 内容中包含反思性语言（如 "haven't given a specific task"），被拒绝检测正则误判为拒绝响应
+- 拒绝检测现在先剥离 `<thinking>` 标签内容，仅对实际输出文本进行检测
+- 流式和非流式路径均已修复
 
----
+### 🧠 OpenAI 格式 Thinking 默认启用
 
-## v2.6.2 (2026-03-14)
-
-### 🗜️ 动态工具结果预算 — 替代固定 15K 硬编码
-
-- **根因**：Cursor API 输出预算与输入大小成反比，固定 15K 工具结果在大上下文下严重挤压输出空间，导致工具调用截断
-- **新增 `getToolResultBudget()`**：根据当前上下文大小动态计算工具结果截断阈值
-  - \>100K chars → 4K | >60K → 6K | >30K → 10K | ≤30K → 15K（完整保留）
-- 在 `convertToCursorRequest()` 中预估并跟踪上下文字符数，压缩前后均更新
-
-### 🗜️ 工具指令体积优化 — 减少 ~30% 输入
-
-- **已知工具跳过描述**：Read/Write/Edit/Bash/Search 等常用工具不再输出冗余描述（模型已从训练数据中了解）
-- **大工具集激进压缩**：>25 个工具时 `compactSchema()` 仅保留 required 参数，进一步缩减输入
-- **few-shot 紧凑化**：示例工具调用从 pretty-print JSON 改为单行紧凑 JSON
-- 历史压缩阈值从 400K 降至 **100K**，工具模式下早期消息截断从 2000 降至 **1500** 字符
-
-### 🧠 Thinking 处理简化 — 消除浪费性重试
-
-- **问题**：之前检测到 thinking 占比过高时会发起额外 API 调用重试，浪费 1 次请求且效果不稳定
-- **新策略**：工具指令中主动注入 `Do NOT use <thinking> tags` 禁令，从源头阻止 thinking 输出
-- 工具模式下收到 thinking 直接静默剥离，不再触发重试 API 调用
-- 流式 / 非流式路径统一对齐：thinking 提取逻辑从 `config.enableThinking` 条件改为无条件提取 + 按模式选择性保留
-- **效果**：工具模式下节省 1-2 次 API 调用，降低延迟和 quota 消耗
-
-### ⚡ 输出格式优化
-
-- 工具指令新增 `Use compact JSON` 规则，引导模型输出无多余空白的 JSON action blocks
-- Write 工具行数限制从 150 → **80 行**，超出时引导使用 `cat >> file` 分片写入
-- 整体减少输出 token 消耗，为实际内容留更多空间
+- OpenAI Chat Completions 协议不再依赖模型名包含 `thinking` 或传入 `reasoning_effort` 才启用
+- 所有 OpenAI 格式请求默认启用 thinking，确保 Claude Code 等客户端始终获得推理内容
 
 ---
 
-## v2.6.1 (2026-03-13)
+## v2.7.0 (2026-03-16)
 
-### 🔧 工具调用截断修复五连发
+### 🔐 API Token 鉴权
 
-- **isTruncated 重写**：消除工具调用 JSON 中反引号导致的误判（如代码块内的 \`\`\` 被当作未闭合标记）
-- **完整工具调用跳过 Tier 恢复**：检测到完整 \`\`\`json action 块时直接跳过阶梯式截断恢复，避免浪费 4 次 API 调用
-- **工具模式不注入 THINKING_HINT**：根治 thinking 占用输出预算导致工具调用截断的问题
-- **Thinking 占比过高自动禁用重试**：thinking 内容远超实际内容时丢弃并禁用 thinking 重新请求
-- **拒绝率回归修复**：v2.6.1 拒绝检测关键词调优 + thinking 标签反引号修复 + URL 图片兼容
+- **公网部署安全**：新增 `auth_tokens` 配置项，支持 Bearer token 鉴权
+- 支持多 token（数组格式）、环境变量 `AUTH_TOKEN`、`x-api-key` 头
+- 未配置时全部放行（向后兼容），GET 请求和 /health 端点无需鉴权
+- 启动 banner 显示鉴权状态
 
----
+### 🧠 Thinking 支持（客户端驱动）
 
-## v2.6.0 (2026-03-12)
+- **Anthropic 协议**：请求体传 `thinking.type = "enabled"` 即启用
+- **OpenAI 协议**：模型名含 `thinking` 或传 `reasoning_effort` 参数即启用
+- 系统提示词注入 `<thinking>` 引导，模型输出自动提取
+- Anthropic 返回 `thinking` content block，OpenAI 返回 `reasoning_content` 字段
+- 提取在拒绝检测之前执行，防止 thinking 内容触发误判
+- 未启用时仍会剥离 thinking 标签（防误判），但内容不返回
 
-### 🖼️ 图片解析多 Provider 支持 (#27)
+### 🔧 已知工具跳过描述（已在 v2.7.2 移除）
 
-- 支持多个 OpenAI 兼容视觉 API provider 顺序尝试
-- 兜底本地 OCR (tesseract.js)
+- `WELL_KNOWN_TOOLS` 集合中的 17 个常用工具（Read、Write、Bash 等）不再生成描述文本
+- 减少约 30% 工具指令输入，节省上下文空间
 
-### 🛡️ 反拒绝策略增强
+### 📊 动态工具结果预算
 
-- 借鉴 Cursor-Toolbox 策略：角色扩展 + thinking 严格化
-- 拒绝恢复文本改为主动工具引导，防止模型放弃任务
+- `getToolResultBudget()` 替代固定 15K 限制
+- 根据当前上下文大小动态调整：小上下文 20K → 大上下文 8K
+- `setCurrentContextChars()` 跟踪实际上下文字符数
+
+### 🛡️ isTruncated 重写
+
+- 重新实现截断检测逻辑，正确处理工具调用 JSON 中的反引号
+- 优先检查 `` ```json action`` 代码块，避免 JSON 字符串值内的反引号导致误判
+- 消除因误判导致的无限重试
+
+### 📦 response_format 支持
+
+- `OpenAIChatRequest` 新增 `response_format` 字段（`json_object` / `json_schema`）
+- JSON 格式请求自动追加格式指令到最后一条用户消息
+- `stripMarkdownJsonWrapper()` 自动剥离响应中的 markdown 代码块包装
+- 流式和非流式路径均支持
+
+### 🧹 计费头清除
+
+- 自动清除系统提示词中的 `x-anthropic-billing-header`
+- 防止模型将其判定为恶意伪造并触发注入警告
+
+### 🌐 Vision 独立代理
+
+- 新增 `vision.proxy` 配置项，图片分析 API 单独走代理
+- Cursor API 保持直连（国内可用），不因代理影响响应速度
+- 未配置时回退到全局 `proxy`
+
+### 🛡️ 新增拒绝模式
+
+- 补充 4 个 Cursor 新拒绝措辞：`isn't something I can help with`、`not something I can help with`、`scoped to answering questions about Cursor`、`falls outside`
 
 ---
 

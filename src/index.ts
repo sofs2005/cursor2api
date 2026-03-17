@@ -11,6 +11,8 @@ import express from 'express';
 import { getConfig } from './config.js';
 import { handleMessages, listModels, countTokens } from './handler.js';
 import { handleOpenAIChatCompletions, handleOpenAIResponses } from './openai-handler.js';
+import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetPayload, apiLogsStream, serveLogViewerLogin, apiClearLogs } from './log-viewer.js';
+import { loadLogsFromFiles } from './logger.js';
 
 // 从 package.json 读取版本号，统一来源，避免多处硬编码
 const require = createRequire(import.meta.url);
@@ -35,45 +37,84 @@ app.use((_req, res, next) => {
     next();
 });
 
-// ==================== 鉴权中间件 ====================
+// ★ 静态文件路由（无需鉴权，CSS/JS 等）
+app.use('/public', express.static('public'));
 
-function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-        // 未配置 API_KEY 则不鉴权，保持原有行为
-        next();
-        return;
-    }
-    const auth = req.headers['authorization'] || '';
-    const xApiKey = req.headers['x-api-key'] as string || '';
-    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : xApiKey.trim();
-    if (token !== apiKey) {
-        res.status(401).json({ error: { message: 'Invalid API key', type: 'authentication_error' } });
+// ★ 日志查看器鉴权中间件：配置了 authTokens 时需要验证
+const logViewerAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const tokens = config.authTokens;
+    if (!tokens || tokens.length === 0) return next(); // 未配置 token 则放行
+
+    // 支持多种传入方式: query ?token=xxx, Authorization header, x-api-key header
+    const tokenFromQuery = req.query.token as string | undefined;
+    const authHeader = req.headers['authorization'] || req.headers['x-api-key'];
+    const tokenFromHeader = authHeader ? String(authHeader).replace(/^Bearer\s+/i, '').trim() : undefined;
+    const token = tokenFromQuery || tokenFromHeader;
+
+    if (!token || !tokens.includes(token)) {
+        // HTML 页面请求 → 返回登录页; API 请求 → 返回 JSON 错误
+        if (req.path === '/logs') {
+            return serveLogViewerLogin(req, res);
+        }
+        res.status(401).json({ error: { message: 'Unauthorized. Provide token via ?token=xxx or Authorization header.', type: 'auth_error' } });
         return;
     }
     next();
-}
+};
+
+// ★ 日志查看器路由（带鉴权）
+app.get('/logs', logViewerAuth, serveLogViewer);
+app.get('/api/logs', logViewerAuth, apiGetLogs);
+app.get('/api/requests', logViewerAuth, apiGetRequests);
+app.get('/api/stats', logViewerAuth, apiGetStats);
+app.get('/api/payload/:requestId', logViewerAuth, apiGetPayload);
+app.get('/api/logs/stream', logViewerAuth, apiLogsStream);
+app.post('/api/logs/clear', logViewerAuth, apiClearLogs);
+
+// ★ API 鉴权中间件：配置了 authTokens 则需要 Bearer token
+app.use((req, res, next) => {
+    // 跳过无需鉴权的路径
+    if (req.method === 'GET' || req.path === '/health') {
+        return next();
+    }
+    const tokens = config.authTokens;
+    if (!tokens || tokens.length === 0) {
+        return next(); // 未配置 token 则全部放行
+    }
+    const authHeader = req.headers['authorization'] || req.headers['x-api-key'];
+    if (!authHeader) {
+        res.status(401).json({ error: { message: 'Missing authentication token. Use Authorization: Bearer <token>', type: 'auth_error' } });
+        return;
+    }
+    const token = String(authHeader).replace(/^Bearer\s+/i, '').trim();
+    if (!tokens.includes(token)) {
+        console.log(`[Auth] 拒绝无效 token: ${token.substring(0, 8)}...`);
+        res.status(403).json({ error: { message: 'Invalid authentication token', type: 'auth_error' } });
+        return;
+    }
+    next();
+});
 
 // ==================== 路由 ====================
 
 // Anthropic Messages API
-app.post('/v1/messages', authMiddleware, handleMessages);
-app.post('/messages', authMiddleware, handleMessages);
+app.post('/v1/messages', handleMessages);
+app.post('/messages', handleMessages);
 
 // OpenAI Chat Completions API（兼容）
-app.post('/v1/chat/completions', authMiddleware, handleOpenAIChatCompletions);
-app.post('/chat/completions', authMiddleware, handleOpenAIChatCompletions);
+app.post('/v1/chat/completions', handleOpenAIChatCompletions);
+app.post('/chat/completions', handleOpenAIChatCompletions);
 
 // OpenAI Responses API（Cursor IDE Agent 模式）
-app.post('/v1/responses', authMiddleware, handleOpenAIResponses);
-app.post('/responses', authMiddleware, handleOpenAIResponses);
+app.post('/v1/responses', handleOpenAIResponses);
+app.post('/responses', handleOpenAIResponses);
 
 // Token 计数
-app.post('/v1/messages/count_tokens', authMiddleware, countTokens);
-app.post('/messages/count_tokens', authMiddleware, countTokens);
+app.post('/v1/messages/count_tokens', countTokens);
+app.post('/messages/count_tokens', countTokens);
 
 // OpenAI 兼容模型列表
-app.get('/v1/models', authMiddleware, listModels);
+app.get('/v1/models', listModels);
 
 // 健康检查
 app.get('/health', (_req, res) => {
@@ -92,6 +133,7 @@ app.get('/', (_req, res) => {
             openai_responses: 'POST /v1/responses',
             models: 'GET /v1/models',
             health: 'GET /health',
+            log_viewer: 'GET /logs',
         },
         usage: {
             claude_code: 'export ANTHROPIC_BASE_URL=http://localhost:' + config.port,
@@ -103,30 +145,32 @@ app.get('/', (_req, res) => {
 
 // ==================== 启动 ====================
 
-const server = app.listen(config.port, () => {
+// ★ 从日志文件加载历史（必须在 listen 之前）
+loadLogsFromFiles();
+
+app.listen(config.port, () => {
+    const auth = config.authTokens?.length ? `${config.authTokens.length} token(s)` : 'open';
+    const logPersist = config.logging?.file_enabled ? `file → ${config.logging.dir}` : 'memory only';
+    
+    // Tools 配置摘要
+    const toolsCfg = config.tools;
+    let toolsInfo = 'default (compact, desc≤50)';
+    if (toolsCfg) {
+        const parts: string[] = [];
+        parts.push(`schema=${toolsCfg.schemaMode}`);
+        parts.push(toolsCfg.descriptionMaxLength === 0 ? 'desc=full' : `desc≤${toolsCfg.descriptionMaxLength}`);
+        if (toolsCfg.includeOnly?.length) parts.push(`whitelist=${toolsCfg.includeOnly.length}`);
+        if (toolsCfg.exclude?.length) parts.push(`blacklist=${toolsCfg.exclude.length}`);
+        toolsInfo = parts.join(', ');
+    }
+    
     console.log('');
-    console.log('  ╔══════════════════════════════════════╗');
-    console.log(`  ║        Cursor2API v${VERSION.padEnd(21)}║`);
-    console.log('  ╠══════════════════════════════════════╣');
-    console.log(`  ║  Server:  http://localhost:${config.port}      ║`);
-    console.log('  ║  Model:   ' + config.cursorModel.padEnd(26) + '║');
-    console.log('  ╠══════════════════════════════════════╣');
-    console.log('  ║  API Endpoints:                      ║');
-    console.log('  ║  • Anthropic: /v1/messages            ║');
-    console.log('  ║  • OpenAI:   /v1/chat/completions     ║');
-    console.log('  ║  • Cursor:   /v1/responses            ║');
-    console.log('  ╠══════════════════════════════════════╣');
-    console.log('  ║  Claude Code:                        ║');
-    console.log(`  ║  export ANTHROPIC_BASE_URL=           ║`);
-    console.log(`  ║    http://localhost:${config.port}              ║`);
-    console.log('  ║  OpenAI / Cursor IDE:                 ║');
-    console.log(`  ║  OPENAI_BASE_URL=                     ║`);
-    console.log(`  ║    http://localhost:${config.port}/v1            ║`);
-    console.log('  ╚══════════════════════════════════════╝');
+    console.log(`  \x1b[36m⚡ Cursor2API v${VERSION}\x1b[0m`);
+    console.log(`  ├─ Server:  \x1b[32mhttp://localhost:${config.port}\x1b[0m`);
+    console.log(`  ├─ Model:   ${config.cursorModel}`);
+    console.log(`  ├─ Auth:    ${auth}`);
+    console.log(`  ├─ Tools:   ${toolsInfo}`);
+    console.log(`  ├─ Logging: ${logPersist}`);
+    console.log(`  └─ Logs:    \x1b[35mhttp://localhost:${config.port}/logs\x1b[0m`);
     console.log('');
 });
-
-// 解除 Node.js HTTP Server 的默认超时限制，防止长时 AI 流式输出被本地掐断
-server.timeout = 0; 
-server.keepAliveTimeout = 120 * 1000;
-server.headersTimeout = 125 * 1000;

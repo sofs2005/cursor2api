@@ -34,6 +34,50 @@ function assertEqual(a, b, msg) {
     if (as !== bs) throw new Error(msg || `Expected ${bs}, got ${as}`);
 }
 
+function stringifyUnknownContent(value) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+        return String(value);
+    }
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+}
+
+function extractOpenAIContentBlocks(msg) {
+    if (msg.content === null || msg.content === undefined) return '';
+    if (typeof msg.content === 'string') return msg.content;
+    if (Array.isArray(msg.content)) {
+        const blocks = [];
+        for (const p of msg.content) {
+            if ((p.type === 'text' || p.type === 'input_text') && p.text) {
+                blocks.push({ type: 'text', text: p.text });
+            } else if (p.type === 'image_url' && p.image_url?.url) {
+                blocks.push({
+                    type: 'image',
+                    source: { type: 'url', media_type: 'image/jpeg', data: p.image_url.url },
+                });
+            } else if (p.type === 'input_image' && p.image_url?.url) {
+                blocks.push({
+                    type: 'image',
+                    source: { type: 'url', media_type: 'image/jpeg', data: p.image_url.url },
+                });
+            }
+        }
+        return blocks.length > 0 ? blocks : '';
+    }
+    return stringifyUnknownContent(msg.content);
+}
+
+function extractOpenAIContent(msg) {
+    const blocks = extractOpenAIContentBlocks(msg);
+    if (typeof blocks === 'string') return blocks;
+    return blocks.filter(b => b.type === 'text').map(b => b.text).join('\n');
+}
+
 // ─── 内联 mergeConsecutiveRoles（与 src/openai-handler.ts 保持同步）────
 function toBlocks(content) {
     if (typeof content === 'string') {
@@ -75,26 +119,29 @@ function responsesToChatCompletions(body) {
             if (item.type === 'function_call_output') {
                 messages.push({
                     role: 'tool',
-                    content: item.output || '',
+                    content: stringifyUnknownContent(item.output),
                     tool_call_id: item.call_id || '',
                 });
                 continue;
             }
             const role = item.role || 'user';
             if (role === 'system' || role === 'developer') {
-                const text = typeof item.content === 'string'
-                    ? item.content
-                    : Array.isArray(item.content)
-                        ? item.content.filter(b => b.type === 'input_text').map(b => b.text).join('\n')
-                        : String(item.content || '');
+                const text = extractOpenAIContent({
+                    role: 'system',
+                    content: item.content ?? null,
+                });
                 messages.push({ role: 'system', content: text });
             } else if (role === 'user') {
-                const content = typeof item.content === 'string'
-                    ? item.content
-                    : Array.isArray(item.content)
-                        ? item.content.filter(b => b.type === 'input_text').map(b => b.text).join('\n')
-                        : String(item.content || '');
-                messages.push({ role: 'user', content });
+                const rawContent = item.content ?? null;
+                const normalizedContent = typeof rawContent === 'string'
+                    ? rawContent
+                    : Array.isArray(rawContent) && rawContent.every(b => b.type === 'input_text')
+                        ? rawContent.map(b => b.text || '').join('\n')
+                        : rawContent;
+                messages.push({
+                    role: 'user',
+                    content: normalizedContent,
+                });
             } else if (role === 'assistant') {
                 const blocks = Array.isArray(item.content) ? item.content : [];
                 const text = blocks.filter(b => b.type === 'output_text').map(b => b.text).join('\n');
@@ -220,6 +267,24 @@ test('function_call_output → tool 消息', () => {
     assertEqual(result.messages[2].tool_call_id, 'call_123');
 });
 
+test('function_call_output 对象 → JSON 字符串', () => {
+    const result = responsesToChatCompletions({
+        model: 'gpt-4',
+        input: [
+            { role: 'user', content: 'Summarize tool output' },
+            {
+                type: 'function_call_output',
+                call_id: 'call_obj',
+                output: { files: ['a.ts', 'b.ts'], count: 2 }
+            },
+        ],
+    });
+    assertEqual(result.messages.length, 2);
+    assertEqual(result.messages[1].role, 'tool');
+    assertEqual(result.messages[1].content, '{"files":["a.ts","b.ts"],"count":2}');
+    assertEqual(result.messages[1].tool_call_id, 'call_obj');
+});
+
 test('助手消息带 function_call → tool_calls', () => {
     const result = responsesToChatCompletions({
         model: 'gpt-4',
@@ -275,6 +340,25 @@ test('input_text content 数组', () => {
         ],
     });
     assertEqual(result.messages[0].content, 'Part 1\nPart 2');
+});
+
+test('Responses user input_image 不应丢失', () => {
+    const result = responsesToChatCompletions({
+        model: 'gpt-4',
+        input: [
+            {
+                role: 'user',
+                content: [
+                    { type: 'input_text', text: '请描述这张图' },
+                    { type: 'input_image', image_url: { url: 'https://example.com/image.jpg' } },
+                ]
+            },
+        ],
+    });
+    assertEqual(result.messages.length, 1);
+    assert(Array.isArray(result.messages[0].content), 'content should remain multimodal blocks');
+    assertEqual(result.messages[0].content[0], { type: 'input_text', text: '请描述这张图' });
+    assertEqual(result.messages[0].content[1], { type: 'input_image', image_url: { url: 'https://example.com/image.jpg' } });
 });
 
 test('stream 默认为 true', () => {

@@ -31,9 +31,12 @@ export interface OpenAIMessage {
 }
 
 export interface OpenAIContentPart {
-    type: 'text' | 'image_url';
+    type: 'text' | 'input_text' | 'image_url' | 'image' | 'input_image' | 'image_file';
     text?: string;
     image_url?: { url: string; detail?: string };
+    image_file?: { file_id: string; detail?: string };
+    // Anthropic-style image source (when type === 'image')
+    source?: { type: string; media_type?: string; data?: string; url?: string };
 }
 
 export interface OpenAITool {

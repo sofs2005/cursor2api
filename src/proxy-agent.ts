@@ -13,6 +13,7 @@ import { ProxyAgent } from 'undici';
 import { getConfig } from './config.js';
 
 let cachedAgent: ProxyAgent | undefined;
+let cachedVisionAgent: ProxyAgent | undefined;
 
 /**
  * 获取代理 dispatcher（如果配置了 proxy）
@@ -25,7 +26,7 @@ export function getProxyDispatcher(): ProxyAgent | undefined {
     if (!proxyUrl) return undefined;
 
     if (!cachedAgent) {
-        console.log(`[Proxy] 使用代理: ${proxyUrl}`);
+        console.log(`[Proxy] 使用全局代理: ${proxyUrl}`);
         cachedAgent = new ProxyAgent(proxyUrl);
     }
 
@@ -39,4 +40,24 @@ export function getProxyDispatcher(): ProxyAgent | undefined {
 export function getProxyFetchOptions(): Record<string, unknown> {
     const dispatcher = getProxyDispatcher();
     return dispatcher ? { dispatcher } : {};
+}
+
+/**
+ * ★ Vision 独立代理：优先使用 vision.proxy，否则回退到全局 proxy
+ * Cursor API 国内可直连不需要代理，但图片分析 API 可能需要
+ */
+export function getVisionProxyFetchOptions(): Record<string, unknown> {
+    const config = getConfig();
+    const visionProxy = config.vision?.proxy;
+
+    if (visionProxy) {
+        if (!cachedVisionAgent) {
+            console.log(`[Proxy] Vision 独立代理: ${visionProxy}`);
+            cachedVisionAgent = new ProxyAgent(visionProxy);
+        }
+        return { dispatcher: cachedVisionAgent };
+    }
+
+    // 回退到全局代理
+    return getProxyFetchOptions();
 }

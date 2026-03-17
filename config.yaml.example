@@ -1,0 +1,128 @@
+# Cursor2API v2 配置文件
+# 复制此文件为 config.yaml 并根据需要修改
+
+# 服务端口
+port: 3010
+
+# 请求超时（秒）
+timeout: 120
+
+# ==================== API 鉴权（推荐公网部署时开启） ====================
+# 配置后所有 POST 请求必须携带 Bearer token 才能访问
+# 客户端使用方式：Authorization: Bearer <token> 或 x-api-key: <token>
+# 支持多个 token（数组格式），不配置则全部放行
+# 环境变量: AUTH_TOKEN=token1,token2 (逗号分隔)
+# auth_tokens:
+#   - "sk-your-secret-token-1"
+#   - "sk-your-secret-token-2"
+
+# ==================== 代理设置 ====================
+# 全局代理（可选）
+# ⚠️ Node.js fetch 不读取 HTTP_PROXY / HTTPS_PROXY 环境变量，
+#    必须在此处或通过 PROXY 环境变量显式配置代理。
+# 支持 http 代理，含认证格式: http://用户名:密码@代理地址:端口
+# 💡 国内可直连 Cursor API，通常不需要配置全局代理
+# proxy: "http://127.0.0.1:7890"
+
+# Cursor 使用的模型
+cursor_model: "anthropic/claude-sonnet-4.6"
+
+# ==================== Thinking 开关（最高优先级） ====================
+# 控制是否向 Cursor 发送 thinking 请求，优先级高于客户端传入的 thinking 参数
+# 设为 true: 强制启用 thinking（即使客户端没请求也注入）
+# 设为 false: 强制关闭 thinking（即使客户端请求了 thinking 也不启用）
+# 不配置此项时: 跟随客户端请求（Anthropic API 看 thinking 参数，OpenAI API 看模型名/reasoning_effort）
+# 环境变量: THINKING_ENABLED=true|false
+# thinking:
+#   enabled: false
+
+# ==================== 历史消息压缩配置 ====================
+# 对话过长时自动压缩早期消息，释放输出空间，防止 Cursor 上下文溢出
+# 压缩算法会智能识别消息类型，不会破坏工具调用的 JSON 结构
+compression:
+  # 是否启用压缩（true/false），关闭后所有消息原样保留
+  # 环境变量: COMPRESSION_ENABLED=true|false
+  enabled: true
+
+  # 压缩级别: 1=轻度, 2=中等(默认), 3=激进
+  # 环境变量: COMPRESSION_LEVEL=1|2|3
+  # 级别说明:
+  #   1（轻度）: 保留最近 10 条消息，早期消息保留 4000 字符，适合短对话
+  #   2（中等）: 保留最近 6 条消息，早期消息保留 2000 字符，推荐日常使用
+  #   3（激进）: 保留最近 4 条消息，早期消息保留 1000 字符，适合超长对话/大工具集
+  level: 2
+
+  # 以下为高级选项，设置后会覆盖 level 的预设值
+  # 保留最近 N 条消息不压缩（数字越大保留越多上下文）
+  # keep_recent: 6
+
+  # 早期消息最大字符数（超过此长度的消息会被智能压缩）
+  # early_msg_max_chars: 2000
+
+# ==================== 工具处理配置 ====================
+# 控制工具定义如何传递给模型，影响上下文体积和工具调用准确性
+tools:
+  # Schema 呈现模式
+  #   'compact': [默认推荐] TypeScript 风格的紧凑签名，体积最小（~15K chars/90工具）
+  #              示例: {file_path!: string, encoding?: utf-8|base64}
+  #   'full':    完整 JSON Schema，体积最大（~135K chars/90工具），工具调用最精确
+  #              适合工具少（<20个）或参数复杂的场景
+  #   'names_only': 只输出工具名和描述，不输出参数Schema
+  #              极致省 token，适合模型已经"学过"这些工具的场景（如 Claude Code 内置工具）
+  schema_mode: 'compact'
+
+  # 工具描述截断长度
+  #   50: [默认推荐] 截断到 50 个字符，节省上下文
+  #   0:  不截断，保留完整描述（适合工具少的场景）
+  #   200: 中等截断，保留大部分有用信息
+  description_max_length: 50
+
+  # 工具白名单 — 只保留指定名称的工具（不配则保留所有工具）
+  # 💡 适合只用核心工具、排除大量不需要的 MCP 工具等场景
+  # include_only:
+  #   - "Read"
+  #   - "Write"
+  #   - "Bash"
+  #   - "Glob"
+  #   - "Grep"
+  #   - "Edit"
+
+  # 工具黑名单 — 排除指定名称的工具
+  # 💡 比白名单更灵活，可以只去掉几个不常用的工具
+  # exclude:
+  #   - "some_mcp_tool"
+
+# 浏览器指纹配置
+fingerprint:
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+# ==================== 视觉处理降级配置（可选） ====================
+# 如果开启，可以拦截您发给大模型的图片进行降级处理（因为目前免费 Cursor 不支持视觉）。
+vision:
+  enabled: true
+  # mode 选项: 'ocr' 或 'api'
+  # 'ocr': [默认模式] 彻底免 Key，零配置，完全依赖本机的 CPU 识图，提取文本、报错日志、代码段后发给大模型。
+  # 'api': 需要配置下方的 baseUrl 和 apiKey，把图发给外部视觉模型（如 Gemini、OpenRouter），能"看到"画面内容和色彩。
+  mode: 'ocr'
+  
+  # ---------- 以下选项仅在 mode: 'api' 时才生效 ----------
+  # base_url: "https://openrouter.ai/api/v1/chat/completions"
+  # api_key: "sk-or-v1-..."
+  # model: "meta-llama/llama-3.2-11b-vision-instruct:free"
+  
+  # Vision 独立代理（可选）
+  # 💡 Cursor API 国内可直连无需代理，但图片分析 API（OpenAI/OpenRouter）可能需要
+  #    配置此项后只有图片 API 走代理，不影响主请求的响应速度
+  #    如果不配，会回退到上面的全局 proxy（如果有的话）
+  # proxy: "http://127.0.0.1:7890"
+
+# ==================== 日志持久化配置（可选） ====================
+# 开启后日志会写入文件，重启后自动加载历史记录
+# 环境变量: LOG_FILE_ENABLED=true|false, LOG_DIR=./logs
+logging:
+  # 是否启用日志文件持久化（默认关闭）
+  file_enabled: false
+  # 日志文件存储目录
+  dir: "./logs"
+  # 日志保留天数（超过天数的日志文件会自动清理）
+  max_days: 7
