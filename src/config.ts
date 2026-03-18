@@ -146,8 +146,8 @@ function applyEnvOverrides(cfg: AppConfig): void {
         process.env.VISION_MODEL !== undefined ||
         process.env.VISION_PROXY !== undefined
     ) {
-        if (!config.vision) {
-            config.vision = {
+        if (!cfg.vision) {
+            cfg.vision = {
                 enabled: true,
                 mode: 'ocr',
                 baseUrl: 'https://api.openai.com/v1/chat/completions',
@@ -157,22 +157,22 @@ function applyEnvOverrides(cfg: AppConfig): void {
             };
         }
         if (process.env.VISION_ENABLED !== undefined) {
-            config.vision.enabled = process.env.VISION_ENABLED !== 'false' && process.env.VISION_ENABLED !== '0';
+            cfg.vision.enabled = process.env.VISION_ENABLED !== 'false' && process.env.VISION_ENABLED !== '0';
         }
         if (process.env.VISION_MODE) {
-            config.vision.mode = process.env.VISION_MODE === 'api' ? 'api' : 'ocr';
+            cfg.vision.mode = process.env.VISION_MODE === 'api' ? 'api' : 'ocr';
         }
         if (process.env.VISION_BASE_URL) {
-            config.vision.baseUrl = process.env.VISION_BASE_URL;
+            cfg.vision.baseUrl = process.env.VISION_BASE_URL;
         }
         if (process.env.VISION_API_KEY !== undefined) {
-            config.vision.apiKey = process.env.VISION_API_KEY;
+            cfg.vision.apiKey = process.env.VISION_API_KEY;
         }
         if (process.env.VISION_MODEL) {
-            config.vision.model = process.env.VISION_MODEL;
+            cfg.vision.model = process.env.VISION_MODEL;
         }
         if (process.env.VISION_PROXY !== undefined) {
-            config.vision.proxy = process.env.VISION_PROXY || undefined;
+            cfg.vision.proxy = process.env.VISION_PROXY || undefined;
         }
     }
 
