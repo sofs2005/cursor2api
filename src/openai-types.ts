@@ -4,6 +4,7 @@ export interface OpenAIChatRequest {
     model: string;
     messages: OpenAIMessage[];
     stream?: boolean;
+    stream_options?: { include_usage?: boolean };
     temperature?: number;
     top_p?: number;
     max_tokens?: number;
@@ -91,6 +92,11 @@ export interface OpenAIChatCompletionChunk {
     created: number;
     model: string;
     choices: OpenAIStreamChoice[];
+    usage?: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+    };
 }
 
 export interface OpenAIStreamChoice {

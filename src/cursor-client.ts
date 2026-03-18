@@ -49,13 +49,16 @@ function getChromeHeaders(): Record<string, string> {
 export async function sendCursorRequest(
     req: CursorChatRequest,
     onChunk: (event: CursorSSEEvent) => void,
+    externalSignal?: AbortSignal,
 ): Promise<void> {
     const maxRetries = 2;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            await sendCursorRequestInner(req, onChunk);
+            await sendCursorRequestInner(req, onChunk, externalSignal);
             return;
         } catch (err) {
+            // 外部主动中止不重试
+            if (externalSignal?.aborted) throw err;
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[Cursor] 请求失败 (${attempt}/${maxRetries}): ${msg.substring(0, 100)}`);
             if (attempt < maxRetries) {
@@ -70,6 +73,7 @@ export async function sendCursorRequest(
 async function sendCursorRequestInner(
     req: CursorChatRequest,
     onChunk: (event: CursorSSEEvent) => void,
+    externalSignal?: AbortSignal,
 ): Promise<void> {
     const headers = getChromeHeaders();
 
@@ -77,6 +81,11 @@ async function sendCursorRequestInner(
 
     const config = getConfig();
     const controller = new AbortController();
+    // 链接外部信号：外部中止时同步中止内部 controller
+    if (externalSignal) {
+        if (externalSignal.aborted) { controller.abort(); }
+        else { externalSignal.addEventListener('abort', () => controller.abort(), { once: true }); }
+    }
 
     // ★ 空闲超时（Idle Timeout）：用读取活动检测替换固定总时长超时。
     // 每次收到新数据时重置计时器，只有在指定时间内完全无数据到达时才中断。

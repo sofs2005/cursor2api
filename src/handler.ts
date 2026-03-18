@@ -693,12 +693,12 @@ export async function autoContinueCursorToolResponseStream(
     hasTools: boolean,
 ): Promise<string> {
     let fullResponse = initialResponse;
-    const MAX_AUTO_CONTINUE = 3;
+    const MAX_AUTO_CONTINUE = getConfig().maxAutoContinue;
     let continueCount = 0;
     let consecutiveSmallAdds = 0;
     const originalMessages = [...cursorReq.messages];
 
-    while (shouldAutoContinueTruncatedToolResponse(fullResponse, hasTools) && continueCount < MAX_AUTO_CONTINUE) {
+    while (MAX_AUTO_CONTINUE > 0 && shouldAutoContinueTruncatedToolResponse(fullResponse, hasTools) && continueCount < MAX_AUTO_CONTINUE) {
         continueCount++;
 
         const anchorLength = Math.min(300, fullResponse.length);
@@ -711,12 +711,16 @@ export async function autoContinueCursorToolResponseStream(
 
 Continue EXACTLY from where you stopped. DO NOT repeat any content already generated. DO NOT restart the response. Output ONLY the remaining content, starting immediately from the cut-off point.`;
 
+        const assistantContext = fullResponse.length > 2000
+            ? '...\n' + fullResponse.slice(-2000)
+            : fullResponse;
+
         const continuationReq: CursorChatRequest = {
             ...cursorReq,
             messages: [
                 ...originalMessages,
                 {
-                    parts: [{ type: 'text', text: fullResponse }],
+                    parts: [{ type: 'text', text: assistantContext }],
                     id: uuidv4(),
                     role: 'assistant',
                 },
@@ -760,12 +764,12 @@ export async function autoContinueCursorToolResponseFull(
     hasTools: boolean,
 ): Promise<string> {
     let fullText = initialText;
-    const MAX_AUTO_CONTINUE = 3;
+    const MAX_AUTO_CONTINUE = getConfig().maxAutoContinue;
     let continueCount = 0;
     let consecutiveSmallAdds = 0;
     const originalMessages = [...cursorReq.messages];
 
-    while (shouldAutoContinueTruncatedToolResponse(fullText, hasTools) && continueCount < MAX_AUTO_CONTINUE) {
+    while (MAX_AUTO_CONTINUE > 0 && shouldAutoContinueTruncatedToolResponse(fullText, hasTools) && continueCount < MAX_AUTO_CONTINUE) {
         continueCount++;
 
         const anchorLength = Math.min(300, fullText.length);
@@ -778,12 +782,16 @@ export async function autoContinueCursorToolResponseFull(
 
 Continue EXACTLY from where you stopped. DO NOT repeat any content already generated. DO NOT restart the response. Output ONLY the remaining content, starting immediately from the cut-off point.`;
 
+        const assistantContext = fullText.length > 2000
+            ? '...\n' + fullText.slice(-2000)
+            : fullText;
+
         const continuationReq: CursorChatRequest = {
             ...cursorReq,
             messages: [
                 ...originalMessages,
                 {
-                    parts: [{ type: 'text', text: fullText }],
+                    parts: [{ type: 'text', text: assistantContext }],
                     id: uuidv4(),
                     role: 'assistant',
                 },
@@ -816,7 +824,7 @@ Continue EXACTLY from where you stopped. DO NOT repeat any content already gener
 }
 
 // ==================== 重试辅助 ====================
-export const MAX_REFUSAL_RETRIES = 2;
+export const MAX_REFUSAL_RETRIES = 1;
 
 /**
  * 当检测到拒绝时，用 IDE 上下文重新包装原始请求体并重试
@@ -1163,18 +1171,40 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
     let activeCursorReq = cursorReq;
     let retryCount = 0;
 
-    const executeStream = async () => {
+    const executeStream = async (detectRefusalEarly = false): Promise<{ earlyAborted: boolean }> => {
         fullResponse = '';
         const apiStart = Date.now();
         let firstChunk = true;
+        let earlyAborted = false;
         log.startPhase('send', '发送到 Cursor');
-        await sendCursorRequest(activeCursorReq, (event: CursorSSEEvent) => {
-            if (event.type !== 'text-delta' || !event.delta) return;
-            if (firstChunk) { log.recordTTFT(); log.endPhase(); log.startPhase('response', '接收响应'); firstChunk = false; }
-            fullResponse += event.delta;
-        });
+
+        // ★ 早期中止支持：检测到拒绝后立即中断流，不等完整响应
+        const abortController = detectRefusalEarly ? new AbortController() : undefined;
+
+        try {
+            await sendCursorRequest(activeCursorReq, (event: CursorSSEEvent) => {
+                if (event.type !== 'text-delta' || !event.delta) return;
+                if (firstChunk) { log.recordTTFT(); log.endPhase(); log.startPhase('response', '接收响应'); firstChunk = false; }
+                fullResponse += event.delta;
+
+                // ★ 早期拒绝检测：前 300 字符即可判断
+                if (detectRefusalEarly && !earlyAborted && fullResponse.length >= 200 && fullResponse.length < 600) {
+                    const preview = fullResponse.substring(0, 400);
+                    if (isRefusal(preview) && !hasToolCalls(preview)) {
+                        earlyAborted = true;
+                        log.info('Handler', 'response', `前${fullResponse.length}字符检测到拒绝，提前中止流`, { preview: preview.substring(0, 150) });
+                        abortController?.abort();
+                    }
+                }
+            }, abortController?.signal);
+        } catch (err) {
+            // 仅在非主动中止时抛出
+            if (!earlyAborted) throw err;
+        }
+
         log.endPhase();
         log.recordCursorApiTime(apiStart);
+        return { earlyAborted };
     };
 
     try {
@@ -1196,7 +1226,7 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
             } catch { /* connection already closed, ignore */ }
         }, 15000);
 
-        await executeStream();
+        await executeStream(true);  // ★ 启用早期拒绝检测，节省 2-5s/次
 
         log.recordRawResponse(fullResponse);
         log.info('Handler', 'response', `原始响应: ${fullResponse.length} chars`, {
@@ -1236,7 +1266,7 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
             log.updateSummary({ retryCount });
             const retryBody = buildRetryRequest(body, retryCount - 1);
             activeCursorReq = await convertToCursorRequest(retryBody);
-            await executeStream();
+            await executeStream(true);  // 重试也启用早期中止
             // 重试后也需要剥离 thinking 标签
             if (fullResponse.includes('<thinking>')) {
                 const { thinkingContent: retryThinking, strippedText: retryStripped } = extractThinking(fullResponse);
@@ -1279,14 +1309,14 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
         // 流完成后，处理完整响应
         // ★ 内部截断续写：如果模型输出过长被截断（常见于写大文件），Proxy 内部分段续写，然后拼接成完整响应
         // 这样可以确保工具调用（如 Write）不会横跨两次 API 响应而退化为纯文本
-        const MAX_AUTO_CONTINUE = 3;
+        const MAX_AUTO_CONTINUE = getConfig().maxAutoContinue ?? 2; // Set default to 2
         let continueCount = 0;
         let consecutiveSmallAdds = 0; // 连续小增量计数
         
         // 保存原始请求的消息快照（不含续写追加的消息）
         const originalMessages = [...activeCursorReq.messages];
         
-        while (shouldAutoContinueTruncatedToolResponse(fullResponse, hasTools) && continueCount < MAX_AUTO_CONTINUE) {
+        while (MAX_AUTO_CONTINUE > 0 && shouldAutoContinueTruncatedToolResponse(fullResponse, hasTools) && continueCount < MAX_AUTO_CONTINUE) {
             continueCount++;
             const prevLength = fullResponse.length;
             log.warn('Handler', 'continuation', `内部检测到截断 (${fullResponse.length} chars)，隐式续写 (第${continueCount}次)`);
@@ -1296,8 +1326,8 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
             const anchorLength = Math.min(300, fullResponse.length);
             const anchorText = fullResponse.slice(-anchorLength);
             
-            // 构造续写请求：原始消息 + 截断的 assistant 回复 + user 续写引导
-            // 每次重建而非累积，防止上下文膨胀
+            // 构造续写请求：原始消息 + 截断的 assistant 回复(仅末尾) + user 续写引导
+            // ★ 只发最后 2000 字符作为 assistant 上下文，大幅减小请求体
             const continuationPrompt = `Your previous response was cut off mid-output. The last part of your output was:
 
 \`\`\`
@@ -1306,12 +1336,16 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
 
 Continue EXACTLY from where you stopped. DO NOT repeat any content already generated. DO NOT restart the response. Output ONLY the remaining content, starting immediately from the cut-off point.`;
 
+            const assistantContext = fullResponse.length > 2000
+                ? '...\n' + fullResponse.slice(-2000)
+                : fullResponse;
+
             activeCursorReq = {
                 ...activeCursorReq,
                 messages: [
                     ...originalMessages,
                     {
-                        parts: [{ type: 'text', text: fullResponse }],
+                        parts: [{ type: 'text', text: assistantContext }],
                         id: uuidv4(),
                         role: 'assistant',
                     },
@@ -1671,12 +1705,12 @@ async function handleNonStream(res: Response, cursorReq: CursorChatRequest, body
     // ★ 内部截断续写（与流式路径对齐）
     // Claude CLI 使用非流式模式时，写大文件最容易被截断
     // 在 proxy 内部完成续写，确保工具调用参数完整
-    const MAX_AUTO_CONTINUE = 3;
+    const MAX_AUTO_CONTINUE = getConfig().maxAutoContinue;
     let continueCount = 0;
     let consecutiveSmallAdds = 0; // 连续小增量计数
     const originalMessages = [...activeCursorReq.messages];
 
-    while (shouldAutoContinueTruncatedToolResponse(fullText, hasTools) && continueCount < MAX_AUTO_CONTINUE) {
+    while (MAX_AUTO_CONTINUE > 0 && shouldAutoContinueTruncatedToolResponse(fullText, hasTools) && continueCount < MAX_AUTO_CONTINUE) {
         continueCount++;
         const prevLength = fullText.length;
         log.warn('Handler', 'continuation', `非流式检测到截断 (${fullText.length} chars)，隐式续写 (第${continueCount}次)`);

@@ -569,6 +569,19 @@ function writeOpenAITextDelta(
     });
 }
 
+function buildOpenAIUsage(
+    anthropicReq: AnthropicRequest,
+    outputText: string,
+): { prompt_tokens: number; completion_tokens: number; total_tokens: number } {
+    const promptTokens = estimateInputTokens(anthropicReq);
+    const completionTokens = Math.ceil(outputText.length / 3);
+    return {
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: promptTokens + completionTokens,
+    };
+}
+
 function writeOpenAIReasoningDelta(
     res: Response,
     id: string,
@@ -723,6 +736,7 @@ async function handleOpenAIIncrementalTextStream(
             delta: {},
             finish_reason: 'stop',
         }],
+        usage: buildOpenAIUsage(anthropicReq, streamer.hasSentText() ? (finalVisibleText || finalRawResponse) : finalTextToSend),
     });
 
     res.write('data: [DONE]\n\n');
@@ -950,7 +964,7 @@ async function handleOpenAIStream(
             }
         }
 
-        // 发送完成 chunk
+        // 发送完成 chunk（带 usage，兼容依赖最终 usage 帧的 OpenAI 客户端/代理）
         writeOpenAISSE(res, {
             id, object: 'chat.completion.chunk', created, model,
             choices: [{
@@ -958,6 +972,7 @@ async function handleOpenAIStream(
                 delta: {},
                 finish_reason: finishReason,
             }],
+            usage: buildOpenAIUsage(anthropicReq, fullResponse),
         });
 
         res.write('data: [DONE]\n\n');
@@ -1097,11 +1112,7 @@ async function handleOpenAINonStream(
             },
             finish_reason: finishReason,
         }],
-        usage: {
-            prompt_tokens: estimateInputTokens(anthropicReq),
-            completion_tokens: Math.ceil(fullText.length / 3),
-            total_tokens: estimateInputTokens(anthropicReq) + Math.ceil(fullText.length / 3),
-        },
+        usage: buildOpenAIUsage(anthropicReq, fullText),
     };
 
     res.json(response);
