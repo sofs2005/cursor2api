@@ -42,7 +42,7 @@ RUN mkdir -p /app/logs && chown cursor:nodejs /app/logs
 # 注意：config.yaml 不打包进镜像，通过 docker-compose volumes 挂载
 # 如果未挂载，服务会使用内置默认值 + 环境变量
 
-# 运行时生成配置（用于 Railway 等平台注入环境变量，避免把 key 写进仓库）
+# 复制入口脚本（确保运行时目录存在）
 COPY --chown=cursor:nodejs scripts/entrypoint.sh /app/entrypoint.sh
 
 # 切换到非 root 用户

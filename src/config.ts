@@ -96,8 +96,12 @@ export function getConfig(): AppConfig {
     if (process.env.CURSOR_MODEL) config.cursorModel = process.env.CURSOR_MODEL;
     if (process.env.MAX_AUTO_CONTINUE !== undefined) config.maxAutoContinue = parseInt(process.env.MAX_AUTO_CONTINUE);
     if (process.env.MAX_HISTORY_MESSAGES !== undefined) config.maxHistoryMessages = parseInt(process.env.MAX_HISTORY_MESSAGES);
-    if (process.env.AUTH_TOKEN) {
+    if (process.env.AUTH_TOKENS) {
+        config.authTokens = process.env.AUTH_TOKENS.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (process.env.AUTH_TOKEN) {
         config.authTokens = process.env.AUTH_TOKEN.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (process.env.API_KEY) {
+        config.authTokens = [process.env.API_KEY].filter(Boolean);
     }
     // 压缩环境变量覆盖
     if (process.env.COMPRESSION_ENABLED !== undefined) {
@@ -123,6 +127,45 @@ export function getConfig(): AppConfig {
     if (process.env.LOG_DIR) {
         if (!config.logging) config.logging = { file_enabled: false, dir: './logs', max_days: 7 };
         config.logging.dir = process.env.LOG_DIR;
+    }
+
+    // Vision 环境变量覆盖（Railway 等平台直接注入）
+    if (
+        process.env.VISION_ENABLED !== undefined ||
+        process.env.VISION_MODE !== undefined ||
+        process.env.VISION_BASE_URL !== undefined ||
+        process.env.VISION_API_KEY !== undefined ||
+        process.env.VISION_MODEL !== undefined ||
+        process.env.VISION_PROXY !== undefined
+    ) {
+        if (!config.vision) {
+            config.vision = {
+                enabled: true,
+                mode: 'ocr',
+                baseUrl: 'https://api.openai.com/v1/chat/completions',
+                apiKey: '',
+                model: 'gpt-4o-mini',
+                proxy: undefined,
+            };
+        }
+        if (process.env.VISION_ENABLED !== undefined) {
+            config.vision.enabled = process.env.VISION_ENABLED !== 'false' && process.env.VISION_ENABLED !== '0';
+        }
+        if (process.env.VISION_MODE) {
+            config.vision.mode = process.env.VISION_MODE === 'api' ? 'api' : 'ocr';
+        }
+        if (process.env.VISION_BASE_URL) {
+            config.vision.baseUrl = process.env.VISION_BASE_URL;
+        }
+        if (process.env.VISION_API_KEY !== undefined) {
+            config.vision.apiKey = process.env.VISION_API_KEY;
+        }
+        if (process.env.VISION_MODEL) {
+            config.vision.model = process.env.VISION_MODEL;
+        }
+        if (process.env.VISION_PROXY !== undefined) {
+            config.vision.proxy = process.env.VISION_PROXY || undefined;
+        }
     }
 
     // 从 base64 FP 环境变量解析指纹
