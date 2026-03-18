@@ -48,9 +48,8 @@ COPY --chown=cursor:nodejs scripts/entrypoint.sh /app/entrypoint.sh
 # 切换到非 root 用户
 USER cursor
 
-# 声明对外暴露的端口和持久化卷
+# 声明对外暴露的端口
 EXPOSE 3010
-VOLUME ["/app/logs"]
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 
