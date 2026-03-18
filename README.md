@@ -1,8 +1,8 @@
-# Cursor2API v2.7.3
+# Cursor2API v2.7.4
 
 将 Cursor 文档页免费 AI 对话接口代理转换为 **Anthropic Messages API** 和 **OpenAI Chat Completions API**，支持 **Claude Code** 和 **Cursor IDE** 使用。
 
-> ⚠️ **版本说明**：当前 v2.7.3 统一 thinking 剥离逻辑、增强拒绝检测准确性、优化 Docker 部署配置。
+> ⚠️ **版本说明**：当前 v2.7.4 截断安全（防止损坏工具调用）、默认禁用代理续写（让客户端原生续写）、日志查看器提示词对比视图。
 
 ## 原理
 
@@ -80,6 +80,7 @@ cp config.yaml.example config.yaml
 | `logging.file_enabled` | 日志文件持久化 | `false` |
 | `logging.dir` | 日志存储目录 | `./logs` |
 | `logging.max_days` | 日志保留天数 | `7` |
+| `max_auto_continue` | 截断自动续写次数 (`0`=禁用，交由客户端续写) | `0` |
 
 > 💡 详细配置说明请参见 `config.yaml.example` 中的注释。
 
@@ -241,6 +242,7 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 | `COMPRESSION_LEVEL` | 压缩级别 (`1`/`2`/`3`) |
 | `LOG_FILE_ENABLED` | 日志文件持久化 (`true`/`false`) |
 | `LOG_DIR` | 日志文件目录 |
+| `MAX_AUTO_CONTINUE` | 截断自动续写次数 (`0`=禁用) |
 
 ## 免责声明 / Disclaimer
 

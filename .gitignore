@@ -41,3 +41,9 @@ config.yaml
 
 # Screenshots (dev artifacts)
 *.png
+# Test result artifacts
+test/*-results*.json
+test/ctf-*-results.json
+
+# Claude local settings
+.claude/

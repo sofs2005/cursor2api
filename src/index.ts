@@ -8,7 +8,7 @@
 import 'dotenv/config';
 import { createRequire } from 'module';
 import express from 'express';
-import { getConfig } from './config.js';
+import { getConfig, initConfigWatcher, stopConfigWatcher } from './config.js';
 import { handleMessages, listModels, countTokens } from './handler.js';
 import { handleOpenAIChatCompletions, handleOpenAIResponses } from './openai-handler.js';
 import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetPayload, apiLogsStream, serveLogViewerLogin, apiClearLogs } from './log-viewer.js';
@@ -42,7 +42,7 @@ app.use('/public', express.static('public'));
 
 // ★ 日志查看器鉴权中间件：配置了 authTokens 时需要验证
 const logViewerAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const tokens = config.authTokens;
+    const tokens = getConfig().authTokens;
     if (!tokens || tokens.length === 0) return next(); // 未配置 token 则放行
 
     // 支持多种传入方式: query ?token=xxx, Authorization header, x-api-key header
@@ -77,7 +77,7 @@ app.use((req, res, next) => {
     if (req.method === 'GET' || req.path === '/health') {
         return next();
     }
-    const tokens = config.authTokens;
+    const tokens = getConfig().authTokens;
     if (!tokens || tokens.length === 0) {
         return next(); // 未配置 token 则全部放行
     }
@@ -154,7 +154,7 @@ app.listen(config.port, () => {
     
     // Tools 配置摘要
     const toolsCfg = config.tools;
-    let toolsInfo = 'default (compact, desc≤50)';
+    let toolsInfo = 'default (full, desc=full)';
     if (toolsCfg) {
         const parts: string[] = [];
         parts.push(`schema=${toolsCfg.schemaMode}`);
@@ -173,4 +173,17 @@ app.listen(config.port, () => {
     console.log(`  ├─ Logging: ${logPersist}`);
     console.log(`  └─ Logs:    \x1b[35mhttp://localhost:${config.port}/logs\x1b[0m`);
     console.log('');
+
+    // ★ 启动 config.yaml 热重载监听
+    initConfigWatcher();
+});
+
+// ★ 优雅关闭：停止文件监听
+process.on('SIGTERM', () => {
+    stopConfigWatcher();
+    process.exit(0);
+});
+process.on('SIGINT', () => {
+    stopConfigWatcher();
+    process.exit(0);
 });

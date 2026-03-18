@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.7.4 (2026-03-18)
+
+### 🛡️ 截断安全 — 防止损坏的工具调用
+
+- **截断时跳过工具解析**：当响应被截断（`stop_reason=max_tokens`）时，不再尝试解析不完整的 `json action` 块，避免生成损坏的工具调用（如写入半截文件）
+- **纯文本回退**：截断响应中的不完整工具块被自动剥离，剩余文本作为纯文本返回，由客户端（Claude Code）原生续写
+- **默认禁用代理续写**：`maxAutoContinue` 默认值改为 `0`，让 Claude Code 原生处理续写（体验更好、进度可见），配置同步更新至 `config.yaml`、`config.yaml.example`、`docker-compose.yml`
+
+### 🧹 提示词注入防御增强
+
+- **身份声明清除**：自动剥离系统提示词中的 Claude Code / Anthropic 身份声明（`You are Claude Code`、`I'm Claude, made by Anthropic` 等），防止模型将其判定为 prompt injection 并拒绝服务
+- **流式热身窗口扩大**：混合流式模式的 `warmupChars` 从 96 增至 300 字符，确保拒绝检测完成前不释放任何文本给客户端
+
+### 📊 日志查看器增强
+
+- **提示词对比视图**：「💬 提示词」tab 重命名为「💬 提示词对比」，分区展示原始请求 vs 转换后的 Cursor 消息
+- **转换摘要面板**：顶部新增 6 格摘要（原始工具数 → Cursor 工具数 0、工具指令占用字符数、消息数变化、总上下文大小）
+- **工具去向提示**：当有工具时显示黄色提示「Cursor API 不支持原生 tools 参数，N 个工具已转换为文本指令嵌入 user #1」
+- **标题提取优化**：通用 XML 标签清除（覆盖所有注入标签）+ 清除 `Respond with the appropriate action` 引导语
+
+---
 ## v2.7.2 (2026-03-17)
 
 ### 🖥️ 日志查看器全面升级

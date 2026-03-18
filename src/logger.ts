@@ -466,10 +466,11 @@ export class RequestLogger {
                         .map((c: any) => c.text || '')
                         .join(' ');
                 }
-                // 去掉 <system-reminder>...</system-reminder> 注入内容
-                text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '');
-                // 去掉 Claude Code 尾部的 "First, think step by step..." 引导语
+                // 去掉 <system-reminder>...</system-reminder> 等 XML 注入内容
+                text = text.replace(/<[a-zA-Z_-]+>[\s\S]*?<\/[a-zA-Z_-]+>/gi, '');
+                // 去掉 Claude Code 尾部的引导语
                 text = text.replace(/First,\s*think\s+step\s+by\s+step[\s\S]*$/i, '');
+                text = text.replace(/Respond with the appropriate action[\s\S]*$/i, '');
                 // 清理换行、多余空格
                 text = text.replace(/\s+/g, ' ').trim();
                 this.summary.title = text.length > 80 ? text.substring(0, 77) + '...' : text;

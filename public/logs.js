@@ -234,18 +234,59 @@ function renderRequestTab(tc){
 function renderPromptsTab(tc){
   if(!curPayload){tc.innerHTML='<div class="empty"><div class="ic">💬</div><p>暂无提示词数据</p></div>';return}
   let h='';
+  const s=selId?rmap[selId]:null;
+  // ===== 转换摘要 =====
+  if(s){
+    const origMsgCount=curPayload.messages?curPayload.messages.length:0;
+    const cursorMsgCount=curPayload.cursorMessages?curPayload.cursorMessages.length:0;
+    const origToolCount=s.toolCount||0;
+    const sysPLen=curPayload.systemPrompt?curPayload.systemPrompt.length:0;
+    const cursorTotalChars=curPayload.cursorRequest?.totalChars||0;
+    // 计算工具指令占用的字符数（第一条 cursor 消息 减去 原始第一条用户消息）
+    const firstCursorMsg=curPayload.cursorMessages?.[0];
+    const firstOrigUser=curPayload.messages?.find(m=>m.role==='user');
+    const toolInstructionChars=firstCursorMsg&&firstOrigUser?Math.max(0,firstCursorMsg.contentLength-(firstOrigUser?.contentLength||0)):0;
+    h+='<div class="content-section"><div class="cs-title">🔄 转换摘要</div>';
+    h+='<div class="sgrid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0">';
+    h+='<div class="si2"><span class="l">原始工具数</span><span class="v">'+origToolCount+'</span></div>';
+    h+='<div class="si2"><span class="l">Cursor 工具数</span><span class="v" style="color:var(--green)">0 <span style="font-size:10px;color:var(--t2)">(嵌入消息)</span></span></div>';
+    h+='<div class="si2"><span class="l">工具指令占用</span><span class="v">'+(toolInstructionChars>0?fmtN(toolInstructionChars)+' chars':origToolCount>0?'嵌入第1条消息':'N/A')+'</span></div>';
+    h+='<div class="si2"><span class="l">原始消息数</span><span class="v">'+origMsgCount+'</span></div>';
+    h+='<div class="si2"><span class="l">Cursor 消息数</span><span class="v" style="color:var(--green)">'+cursorMsgCount+'</span></div>';
+    h+='<div class="si2"><span class="l">总上下文大小</span><span class="v">'+(cursorTotalChars>0?fmtN(cursorTotalChars)+' chars':'—')+'</span></div>';
+    h+='</div>';
+    if(origToolCount>0){
+      h+='<div style="color:var(--yellow);font-size:12px;padding:6px 10px;background:rgba(234,179,8,0.1);border-radius:6px;margin-top:4px">⚠️ Cursor API 不支持原生 tools 参数。'+origToolCount+' 个工具定义已转换为文本指令，嵌入在 user #1 消息中'+(toolInstructionChars>0?'（约 '+fmtN(toolInstructionChars)+' chars）':'')+'</div>';
+    }
+    h+='</div>';
+  }
+  // ===== 原始请求 =====
+  h+='<div class="content-section"><div class="cs-title">📥 客户端原始请求</div></div>';
   if(curPayload.systemPrompt){
-    h+='<div class="content-section"><div class="cs-title">🔒 System Prompt <span class="cnt">'+fmtN(curPayload.systemPrompt.length)+' chars</span></div>';
-    h+='<div class="resp-box" style="max-height:600px;overflow-y:auto">'+escH(curPayload.systemPrompt)+'<button class="copy-btn" onclick="copyText(curPayload.systemPrompt)">复制</button></div></div>';
+    h+='<div class="content-section"><div class="cs-title">🔒 原始 System Prompt <span class="cnt">'+fmtN(curPayload.systemPrompt.length)+' chars</span></div>';
+    h+='<div class="resp-box" style="max-height:400px;overflow-y:auto;border-color:var(--orange)">'+escH(curPayload.systemPrompt)+'<button class="copy-btn" onclick="copyText(curPayload.systemPrompt)">复制</button></div></div>';
   }
   if(curPayload.messages&&curPayload.messages.length){
-    h+='<div class="content-section"><div class="cs-title">💬 消息列表 <span class="cnt">'+curPayload.messages.length+' 条</span></div>';
+    h+='<div class="content-section"><div class="cs-title">💬 原始消息列表 <span class="cnt">'+curPayload.messages.length+' 条</span></div>';
     curPayload.messages.forEach((m,i)=>{
       const imgs=m.hasImages?' 🖼️':'';
       const collapsed=m.contentPreview.length>500;
       h+='<div class="msg-item"><div class="msg-header" onclick="togMsg(this)"><span class="msg-role '+m.role+'">'+m.role+imgs+' #'+(i+1)+'</span><span class="msg-meta">'+fmtN(m.contentLength)+' chars '+(collapsed?'▶ 展开':'▼ 收起')+'</span></div><div class="msg-body" style="display:'+(collapsed?'none':'block')+';max-height:800px;overflow-y:auto">'+escH(m.contentPreview)+'</div></div>';
     });
     h+='</div>';
+  }
+  // ===== 转换后 Cursor 请求 =====
+  if(curPayload.cursorMessages&&curPayload.cursorMessages.length){
+    h+='<div class="content-section" style="margin-top:24px;border-top:2px solid var(--green);padding-top:16px"><div class="cs-title">📤 Cursor 最终消息（转换后） <span class="cnt" style="background:var(--green);color:#fff">'+curPayload.cursorMessages.length+' 条</span></div>';
+    h+='<div style="color:var(--t2);font-size:12px;margin-bottom:8px">⬇️ 以下是清洗后实际发给 Cursor 模型的消息（已清除身份声明、注入工具指令、添加认知重构）</div>';
+    curPayload.cursorMessages.forEach((m,i)=>{
+      const collapsed=m.contentPreview.length>500;
+      h+='<div class="msg-item" style="border-left:3px solid var(--green)"><div class="msg-header" onclick="togMsg(this)"><span class="msg-role '+m.role+'">'+m.role+' #'+(i+1)+'</span><span class="msg-meta">'+fmtN(m.contentLength)+' chars '+(collapsed?'▶ 展开':'▼ 收起')+'</span></div><div class="msg-body" style="display:'+(collapsed?'none':'block')+';max-height:800px;overflow-y:auto">'+escH(m.contentPreview)+'</div></div>';
+    });
+    h+='</div>';
+  } else if(curPayload.cursorRequest) {
+    h+='<div class="content-section" style="margin-top:24px;border-top:2px solid var(--green);padding-top:16px"><div class="cs-title">📤 Cursor 最终请求（转换后）</div>';
+    h+='<div class="resp-box" style="border-color:var(--green)">'+syntaxHL(curPayload.cursorRequest)+'</div></div>';
   }
   tc.innerHTML=h||'<div class="empty"><div class="ic">💬</div><p>暂无提示词数据</p></div>';
 }

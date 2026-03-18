@@ -28,7 +28,7 @@ import { convertToCursorRequest, parseToolCalls, hasToolCalls } from './converte
 import { sendCursorRequest, sendCursorRequestFull } from './cursor-client.js';
 import { getConfig } from './config.js';
 import { createRequestLogger } from './logger.js';
-import { createIncrementalTextStreamer, splitLeadingThinkingBlocks, stripThinkingTags } from './streaming-text.js';
+import { createIncrementalTextStreamer, hasLeadingThinking, splitLeadingThinkingBlocks, stripThinkingTags } from './streaming-text.js';
 import {
     autoContinueCursorToolResponseFull,
     autoContinueCursorToolResponseStream,
@@ -779,11 +779,12 @@ async function handleOpenAIStream(
     let retryCount = 0;
 
     // 统一缓冲模式：先缓冲全部响应，再检测拒绝和处理
-    const executeStream = async () => {
+    const executeStream = async (onTextDelta?: (delta: string) => void) => {
         fullResponse = '';
         await sendCursorRequest(activeCursorReq, (event: CursorSSEEvent) => {
             if (event.type !== 'text-delta' || !event.delta) return;
             fullResponse += event.delta;
+            onTextDelta?.(event.delta);
         });
     };
 
@@ -793,26 +794,132 @@ async function handleOpenAIStream(
             return;
         }
 
-        await executeStream();
+        // ★ 混合流式：文本增量 + 工具缓冲（与 Anthropic handler 同一设计）
+        const thinkingEnabled = anthropicReq.thinking?.type === 'enabled';
+        const hybridStreamer = createIncrementalTextStreamer({
+            warmupChars: 300,   // ★ 与拒绝检测窗口对齐
+            transform: sanitizeResponse,
+            isBlockedPrefix: (text) => isRefusal(text.substring(0, 300)),
+        });
+        let toolMarkerDetected = false;
+        let pendingText = '';
+        let hybridThinkingContent = '';
+        let hybridLeadingBuffer = '';
+        let hybridLeadingResolved = false;
+        const TOOL_MARKER = '```json action';
+        const MARKER_LOOKBACK = TOOL_MARKER.length + 2;
+        let hybridTextSent = false;
+        let hybridReasoningSent = false;
 
-        // 日志记录在详细日志中 (Web UI 可见)
+        const pushToStreamer = (text: string): void => {
+            if (!text || toolMarkerDetected) return;
+            pendingText += text;
+            const idx = pendingText.indexOf(TOOL_MARKER);
+            if (idx >= 0) {
+                const before = pendingText.substring(0, idx);
+                if (before) {
+                    const d = hybridStreamer.push(before);
+                    if (d) {
+                        if (thinkingEnabled && hybridThinkingContent && !hybridReasoningSent) {
+                            writeOpenAIReasoningDelta(res, id, created, model, hybridThinkingContent);
+                            hybridReasoningSent = true;
+                        }
+                        writeOpenAITextDelta(res, id, created, model, d);
+                        hybridTextSent = true;
+                    }
+                }
+                toolMarkerDetected = true;
+                pendingText = '';
+                return;
+            }
+            const safeEnd = pendingText.length - MARKER_LOOKBACK;
+            if (safeEnd > 0) {
+                const safe = pendingText.substring(0, safeEnd);
+                pendingText = pendingText.substring(safeEnd);
+                const d = hybridStreamer.push(safe);
+                if (d) {
+                    if (thinkingEnabled && hybridThinkingContent && !hybridReasoningSent) {
+                        writeOpenAIReasoningDelta(res, id, created, model, hybridThinkingContent);
+                        hybridReasoningSent = true;
+                    }
+                    writeOpenAITextDelta(res, id, created, model, d);
+                    hybridTextSent = true;
+                }
+            }
+        };
+
+        const processHybridDelta = (delta: string): void => {
+            if (!hybridLeadingResolved) {
+                hybridLeadingBuffer += delta;
+                const split = splitLeadingThinkingBlocks(hybridLeadingBuffer);
+                if (split.startedWithThinking) {
+                    if (!split.complete) return;
+                    hybridThinkingContent = split.thinkingContent;
+                    hybridLeadingResolved = true;
+                    hybridLeadingBuffer = '';
+                    pushToStreamer(split.remainder);
+                    return;
+                }
+                if (hybridLeadingBuffer.trimStart().length < 10) return;
+                hybridLeadingResolved = true;
+                const buffered = hybridLeadingBuffer;
+                hybridLeadingBuffer = '';
+                pushToStreamer(buffered);
+                return;
+            }
+            pushToStreamer(delta);
+        };
+
+        await executeStream(processHybridDelta);
+
+        // flush 残留缓冲
+        if (!hybridLeadingResolved && hybridLeadingBuffer) {
+            hybridLeadingResolved = true;
+            const split = splitLeadingThinkingBlocks(hybridLeadingBuffer);
+            if (split.startedWithThinking && split.complete) {
+                hybridThinkingContent = split.thinkingContent;
+                pushToStreamer(split.remainder);
+            } else {
+                pushToStreamer(hybridLeadingBuffer);
+            }
+        }
+        if (pendingText && !toolMarkerDetected) {
+            const d = hybridStreamer.push(pendingText);
+            if (d) {
+                if (thinkingEnabled && hybridThinkingContent && !hybridReasoningSent) {
+                    writeOpenAIReasoningDelta(res, id, created, model, hybridThinkingContent);
+                    hybridReasoningSent = true;
+                }
+                writeOpenAITextDelta(res, id, created, model, d);
+                hybridTextSent = true;
+            }
+            pendingText = '';
+        }
+        const hybridRemaining = hybridStreamer.finish();
+        if (hybridRemaining) {
+            if (thinkingEnabled && hybridThinkingContent && !hybridReasoningSent) {
+                writeOpenAIReasoningDelta(res, id, created, model, hybridThinkingContent);
+                hybridReasoningSent = true;
+            }
+            writeOpenAITextDelta(res, id, created, model, hybridRemaining);
+            hybridTextSent = true;
+        }
 
         // ★ Thinking 提取（在拒绝检测之前）
-        const thinkingEnabled = anthropicReq.thinking?.type === 'enabled';
-        let reasoningContent: string | undefined;
-        if (fullResponse.includes('<thinking>')) {
+        let reasoningContent: string | undefined = hybridThinkingContent || undefined;
+        if (hasLeadingThinking(fullResponse)) {
             const { thinkingContent: extracted, strippedText } = extractThinking(fullResponse);
             if (extracted) {
-                if (thinkingEnabled) {
+                if (thinkingEnabled && !reasoningContent) {
                     reasoningContent = extracted;
                 }
                 fullResponse = strippedText;
-                // thinking 剥离记录在详细日志中
             }
         }
 
-        // 拒绝检测 + 自动重试（工具模式和非工具模式均生效）
+        // 拒绝检测 + 自动重试
         const shouldRetryRefusal = () => {
+            if (hybridTextSent) return false;  // 已发文字，不可重试
             if (!isRefusal(fullResponse)) return false;
             if (hasTools && hasToolCalls(fullResponse)) return false;
             return true;
@@ -820,22 +927,18 @@ async function handleOpenAIStream(
 
         while (shouldRetryRefusal() && retryCount < MAX_REFUSAL_RETRIES) {
             retryCount++;
-            // 重试记录在详细日志中
             const retryBody = buildRetryRequest(anthropicReq, retryCount - 1);
             activeCursorReq = await convertToCursorRequest(retryBody);
-            await executeStream();
+            await executeStream();  // 重试不传回调
         }
         if (shouldRetryRefusal()) {
             if (!hasTools) {
                 if (isToolCapabilityQuestion(anthropicReq)) {
-                    // 记录在详细日志
                     fullResponse = CLAUDE_TOOLS_RESPONSE;
                 } else {
-                    // 记录在详细日志
                     fullResponse = CLAUDE_IDENTITY_RESPONSE;
                 }
             } else {
-                // 记录在详细日志
                 fullResponse = 'I understand the request. Let me analyze the information and proceed with the appropriate action.';
             }
         }
@@ -843,7 +946,6 @@ async function handleOpenAIStream(
         // 极短响应重试
         if (hasTools && fullResponse.trim().length < 10 && retryCount < MAX_REFUSAL_RETRIES) {
             retryCount++;
-            // 记录在详细日志
             activeCursorReq = await convertToCursorRequest(anthropicReq);
             await executeStream();
         }
@@ -854,8 +956,8 @@ async function handleOpenAIStream(
 
         let finishReason: 'stop' | 'tool_calls' = 'stop';
 
-        // ★ 发送 reasoning_content（如果有）
-        if (reasoningContent) {
+        // ★ 发送 reasoning_content（仅在混合流式未发送时）
+        if (reasoningContent && !hybridReasoningSent) {
             writeOpenAISSE(res, {
                 id, object: 'chat.completion.chunk', created, model,
                 choices: [{
@@ -872,18 +974,20 @@ async function handleOpenAIStream(
             if (toolCalls.length > 0) {
                 finishReason = 'tool_calls';
 
-                // 发送工具调用前的残余文本（清洗后）
-                let cleanOutput = isRefusal(cleanText) ? '' : cleanText;
-                cleanOutput = sanitizeResponse(cleanOutput);
-                if (cleanOutput) {
-                    writeOpenAISSE(res, {
-                        id, object: 'chat.completion.chunk', created, model,
-                        choices: [{
-                            index: 0,
-                            delta: { content: cleanOutput },
-                            finish_reason: null,
-                        }],
-                    });
+                // 发送工具调用前的残余文本 — 如果混合流式已发送则跳过
+                if (!hybridTextSent) {
+                    let cleanOutput = isRefusal(cleanText) ? '' : cleanText;
+                    cleanOutput = sanitizeResponse(cleanOutput);
+                    if (cleanOutput) {
+                        writeOpenAISSE(res, {
+                            id, object: 'chat.completion.chunk', created, model,
+                            choices: [{
+                                index: 0,
+                                delta: { content: cleanOutput },
+                                finish_reason: null,
+                            }],
+                        });
+                    }
                 }
 
                 // 增量流式发送工具调用：先发 name+id，再分块发 arguments
@@ -929,38 +1033,42 @@ async function handleOpenAIStream(
                     }
                 }
             } else {
-                // 误报：发送清洗后的文本
-                let textToSend = fullResponse;
-                if (isRefusal(fullResponse)) {
-                    textToSend = 'I understand the request. Let me proceed with the appropriate action. Could you clarify what specific task you would like me to perform?';
-                } else {
-                    textToSend = sanitizeResponse(fullResponse);
+                // 误报：发送清洗后的文本（如果混合流式未发送）
+                if (!hybridTextSent) {
+                    let textToSend = fullResponse;
+                    if (isRefusal(fullResponse)) {
+                        textToSend = 'I understand the request. Let me proceed with the appropriate action. Could you clarify what specific task you would like me to perform?';
+                    } else {
+                        textToSend = sanitizeResponse(fullResponse);
+                    }
+                    writeOpenAISSE(res, {
+                        id, object: 'chat.completion.chunk', created, model,
+                        choices: [{
+                            index: 0,
+                            delta: { content: textToSend },
+                            finish_reason: null,
+                        }],
+                    });
                 }
-                writeOpenAISSE(res, {
-                    id, object: 'chat.completion.chunk', created, model,
-                    choices: [{
-                        index: 0,
-                        delta: { content: textToSend },
-                        finish_reason: null,
-                    }],
-                });
             }
         } else {
-            // 无工具模式或无工具调用 — 统一清洗后发送
-            let sanitized = sanitizeResponse(fullResponse);
-            // ★ response_format 后处理：剥离 markdown 代码块包裹
-            if (body.response_format && body.response_format.type !== 'text') {
-                sanitized = stripMarkdownJsonWrapper(sanitized);
-            }
-            if (sanitized) {
-                writeOpenAISSE(res, {
-                    id, object: 'chat.completion.chunk', created, model,
-                    choices: [{
-                        index: 0,
-                        delta: { content: sanitized },
-                        finish_reason: null,
-                    }],
-                });
+            // 无工具模式或无工具调用 — 如果混合流式未发送则统一清洗后发送
+            if (!hybridTextSent) {
+                let sanitized = sanitizeResponse(fullResponse);
+                // ★ response_format 后处理：剥离 markdown 代码块包裹
+                if (body.response_format && body.response_format.type !== 'text') {
+                    sanitized = stripMarkdownJsonWrapper(sanitized);
+                }
+                if (sanitized) {
+                    writeOpenAISSE(res, {
+                        id, object: 'chat.completion.chunk', created, model,
+                        choices: [{
+                            index: 0,
+                            delta: { content: sanitized },
+                            finish_reason: null,
+                        }],
+                    });
+                }
             }
         }
 
@@ -1010,7 +1118,7 @@ async function handleOpenAINonStream(
     // ★ Thinking 提取必须在拒绝检测之前 — 否则 thinking 内容中的关键词会触发 isRefusal 误判
     const thinkingEnabled = anthropicReq.thinking?.type === 'enabled';
     let reasoningContent: string | undefined;
-    if (fullText.includes('<thinking>')) {
+    if (hasLeadingThinking(fullText)) {
         const { thinkingContent: extracted, strippedText } = extractThinking(fullText);
         if (extracted) {
             if (thinkingEnabled) {
@@ -1032,7 +1140,7 @@ async function handleOpenAINonStream(
             activeCursorReq = retryCursorReq;
             fullText = await sendCursorRequestFull(activeCursorReq);
             // 重试响应也需要先剥离 thinking
-            if (fullText.includes('<thinking>')) {
+            if (hasLeadingThinking(fullText)) {
                 fullText = extractThinking(fullText).strippedText;
             }
             if (!shouldRetry()) break;
@@ -1402,7 +1510,7 @@ async function handleResponsesStream(
         await executeStream();
 
         // Thinking 提取
-        if (fullResponse.includes('<thinking>')) {
+        if (hasLeadingThinking(fullResponse)) {
             const { strippedText } = extractThinking(fullResponse);
             fullResponse = strippedText;
         }
@@ -1419,7 +1527,7 @@ async function handleResponsesStream(
             const retryBody = buildRetryRequest(anthropicReq, retryCount - 1);
             activeCursorReq = await convertToCursorRequest(retryBody);
             await executeStream();
-            if (fullResponse.includes('<thinking>')) {
+            if (hasLeadingThinking(fullResponse)) {
                 fullResponse = extractThinking(fullResponse).strippedText;
             }
         }
@@ -1605,7 +1713,7 @@ async function handleResponsesNonStream(
     const hasTools = (anthropicReq.tools?.length ?? 0) > 0;
 
     // Thinking 提取
-    if (fullText.includes('<thinking>')) {
+    if (hasLeadingThinking(fullText)) {
         fullText = extractThinking(fullText).strippedText;
     }
 
@@ -1617,7 +1725,7 @@ async function handleResponsesNonStream(
             const retryCursorReq = await convertToCursorRequest(retryBody);
             activeCursorReq = retryCursorReq;
             fullText = await sendCursorRequestFull(activeCursorReq);
-            if (fullText.includes('<thinking>')) {
+            if (hasLeadingThinking(fullText)) {
                 fullText = extractThinking(fullText).strippedText;
             }
             if (!shouldRetry()) break;

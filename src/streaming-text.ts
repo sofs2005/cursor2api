@@ -53,6 +53,18 @@ export function stripThinkingTags(text: string): string {
 }
 
 /**
+ * 检测文本是否以 <thinking> 开头（允许前导空白）。
+ *
+ * ★ 修复 Issue #64：用位置约束替代宽松的 includes('<thinking>')，
+ *   防止用户消息或模型正文中的字面量 <thinking> 误触发 extractThinking，
+ *   导致正文内容被错误截断或丢失。
+ */
+export function hasLeadingThinking(text: string): boolean {
+    if (!text) return false;
+    return /^\s*<thinking>/.test(text);
+}
+
+/**
  * 只解析“前导 thinking 块”。
  *
  * Cursor 的 thinking 通常位于响应最前面，正文随后出现。
