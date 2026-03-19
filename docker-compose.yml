@@ -50,3 +50,10 @@ services:
       # ── Vision 图片处理 ──
       # 默认使用本地 OCR（零配置），如需外部 Vision API 请在 config.yaml 中修改 vision.mode 为 'api'
       # 并配置 vision.base_url / vision.api_key / vision.model
+
+      # ── 响应内容清洗 ──
+      # 开启后会将响应中 Cursor 身份引用替换为 Claude（默认关闭）
+      # - SANITIZE_RESPONSE=true
+
+      # ── 自定义拒绝检测规则 ──
+      # 仅支持 config.yaml 配置（无环境变量覆盖），详见 config.yaml.example 中的 refusal_patterns 节

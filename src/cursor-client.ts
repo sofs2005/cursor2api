@@ -59,6 +59,8 @@ export async function sendCursorRequest(
         } catch (err) {
             // 外部主动中止不重试
             if (externalSignal?.aborted) throw err;
+            // ★ 退化循环中止不重试 — 已有的内容是有效的，重试也会重蹈覆辙
+            if (err instanceof Error && err.message === 'DEGENERATE_LOOP_ABORTED') return;
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[Cursor] 请求失败 (${attempt}/${maxRetries}): ${msg.substring(0, 100)}`);
             if (attempt < maxRetries) {
@@ -127,6 +129,14 @@ async function sendCursorRequestInner(
         const decoder = new TextDecoder();
         let buffer = '';
 
+        // ★ 退化重复检测器 (#66)
+        // 模型有时会陷入循环，不断输出 </s>、</br> 等无意义标记
+        // 检测原理：跟踪最近的连续相同 delta，超过阈值则中止流
+        let lastDelta = '';
+        let repeatCount = 0;
+        const REPEAT_THRESHOLD = 8;       // 同一 delta 连续出现 8 次 → 退化
+        let degenerateAborted = false;
+
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -145,11 +155,44 @@ async function sendCursorRequestInner(
 
                 try {
                     const event: CursorSSEEvent = JSON.parse(data);
+
+                    // ★ 退化重复检测：当模型重复输出同一短文本片段时中止
+                    if (event.type === 'text-delta' && event.delta) {
+                        const trimmedDelta = event.delta.trim();
+                        // 只检测短 token（长文本重复是正常的，比如重复的代码行）
+                        if (trimmedDelta.length > 0 && trimmedDelta.length <= 20) {
+                            if (trimmedDelta === lastDelta) {
+                                repeatCount++;
+                                if (repeatCount >= REPEAT_THRESHOLD) {
+                                    console.warn(`[Cursor] ⚠️ 检测到退化循环: "${trimmedDelta}" 已连续重复 ${repeatCount} 次，中止流`);
+                                    degenerateAborted = true;
+                                    // 不再转发此 delta，直接中止
+                                    reader.cancel();
+                                    break;
+                                }
+                            } else {
+                                lastDelta = trimmedDelta;
+                                repeatCount = 1;
+                            }
+                        } else {
+                            // 长文本或空白 → 重置计数
+                            lastDelta = '';
+                            repeatCount = 0;
+                        }
+                    }
+
                     onChunk(event);
                 } catch {
                     // 非 JSON 数据，忽略
                 }
             }
+
+            if (degenerateAborted) break;
+        }
+
+        // ★ 退化循环中止后，抛出特殊错误让外层 sendCursorRequest 不再重试
+        if (degenerateAborted) {
+            throw new Error('DEGENERATE_LOOP_ABORTED');
         }
 
         // 处理剩余 buffer

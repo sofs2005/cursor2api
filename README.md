@@ -1,8 +1,8 @@
-# Cursor2API v2.7.4
+# Cursor2API v2.7.5
 
 将 Cursor 文档页免费 AI 对话接口代理转换为 **Anthropic Messages API** 和 **OpenAI Chat Completions API**，支持 **Claude Code** 和 **Cursor IDE** 使用。
 
-> ⚠️ **版本说明**：当前 v2.7.4 截断安全（防止损坏工具调用）、默认禁用代理续写（让客户端原生续写）、日志查看器提示词对比视图。
+> ⚠️ **版本说明**：当前 v2.7.5 新增常量集中管理、自定义拒绝规则、响应清洗开关，代码可维护性大幅提升。
 
 ## 原理
 
@@ -36,8 +36,8 @@
 - **工具参数自动修复** - 字段名映射 (`file_path` → `path`)、智能引号替换、模糊匹配修复
 - **多模态视觉降级处理** - 内置纯本地 CPU OCR 图片文字提取（零配置免 Key），或支持外接第三方免费视觉大模型 API 解释图片
 - **全工具支持** - 无工具白名单限制，支持所有 MCP 工具和自定义扩展
-- **多层拒绝拦截** - 50+ 正则模式匹配拒绝文本（中英文），自动重试 + 认知重构绕过
-- **三层身份保护** - 身份探针拦截 + 拒绝重试 + 响应清洗，确保输出永远呈现 Claude 身份
+- **多层拒绝拦截** - 50+ 正则模式匹配拒绝文本（中英文），自动重试 + 认知重构绕过，支持自定义规则
+- **三层身份保护** - 身份探针拦截 + 拒绝重试 + 响应清洗（可配置开关），确保输出永远呈现 Claude 身份
 - **截断无缝续写** - Proxy 底层自动拼接被截断的工具响应（最多 6 次），含智能去重
 - **渐进式历史压缩** - 智能识别消息类型，工具调用摘要化、工具结果头尾保留，不破坏 JSON 结构
 - **🆕 可配置压缩系统** - 支持开关 + 3档级别（轻度/中等/激进）+ 自定义参数，环境变量可覆盖
@@ -81,6 +81,8 @@ cp config.yaml.example config.yaml
 | `logging.dir` | 日志存储目录 | `./logs` |
 | `logging.max_days` | 日志保留天数 | `7` |
 | `max_auto_continue` | 截断自动续写次数 (`0`=禁用，交由客户端续写) | `0` |
+| `sanitize_response` | 响应内容清洗开关（替换 Cursor 身份引用为 Claude） | `false` |
+| `refusal_patterns` | 自定义拒绝检测规则列表（追加到内置规则） | 不配置 |
 
 > 💡 详细配置说明请参见 `config.yaml.example` 中的注释。
 
@@ -150,6 +152,7 @@ cursor2api/
 │   ├── index.ts            # 入口 + Express 服务 + 路由 + API 鉴权中间件
 │   ├── config.ts           # 配置管理（含 auth_tokens / vision.proxy）
 │   ├── types.ts            # 类型定义（含 thinking / authTokens）
+│   ├── constants.ts        # 全局常量（拒绝模式、身份探针、回复模板）
 │   ├── cursor-client.ts    # Cursor API 客户端 + Chrome TLS 指纹
 │   ├── converter.ts        # 协议转换 + 提示词注入 + 上下文清洗 + 动态预算
 │   ├── handler.ts          # Anthropic API 处理器 + 身份保护 + 拒绝拦截 + Thinking
@@ -243,6 +246,7 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 | `LOG_FILE_ENABLED` | 日志文件持久化 (`true`/`false`) |
 | `LOG_DIR` | 日志文件目录 |
 | `MAX_AUTO_CONTINUE` | 截断自动续写次数 (`0`=禁用) |
+| `SANITIZE_RESPONSE` | 响应内容清洗开关 (`true`/`false`，默认 `false`) |
 
 ## 免责声明 / Disclaimer
 

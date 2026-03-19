@@ -91,6 +91,14 @@ function parseYamlConfig(defaults: AppConfig): { config: AppConfig; raw: Record<
                 exclude: Array.isArray(t.exclude) ? t.exclude.map(String) : undefined,
             };
         }
+        // ★ 响应内容清洗开关（默认关闭）
+        if (yaml.sanitize_response !== undefined) {
+            result.sanitizeEnabled = yaml.sanitize_response === true;
+        }
+        // ★ 自定义拒绝检测规则
+        if (Array.isArray(yaml.refusal_patterns)) {
+            result.refusalPatterns = yaml.refusal_patterns.map(String).filter(Boolean);
+        }
     } catch (e) {
         console.warn('[Config] 读取 config.yaml 失败:', e);
     }
@@ -135,6 +143,10 @@ function applyEnvOverrides(cfg: AppConfig): void {
     if (process.env.LOG_DIR) {
         if (!cfg.logging) cfg.logging = { file_enabled: false, dir: './logs', max_days: 7 };
         cfg.logging.dir = process.env.LOG_DIR;
+    }
+    // 响应内容清洗环境变量覆盖
+    if (process.env.SANITIZE_RESPONSE !== undefined) {
+        cfg.sanitizeEnabled = process.env.SANITIZE_RESPONSE === 'true' || process.env.SANITIZE_RESPONSE === '1';
     }
 
     // Vision 环境变量覆盖（Railway 等平台直接注入）
@@ -197,6 +209,7 @@ function defaultConfig(): AppConfig {
         cursorModel: 'anthropic/claude-sonnet-4.6',
         maxAutoContinue: 0,
         maxHistoryMessages: -1,
+        sanitizeEnabled: false,  // 默认关闭响应内容清洗
         fingerprint: {
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
         },
@@ -235,6 +248,12 @@ function detectChanges(oldCfg: AppConfig, newCfg: AppConfig): string[] {
 
     // tools
     if (JSON.stringify(oldCfg.tools) !== JSON.stringify(newCfg.tools)) changes.push('tools: (changed)');
+
+    // refusalPatterns
+    // sanitize_response
+    if (oldCfg.sanitizeEnabled !== newCfg.sanitizeEnabled) changes.push(`sanitize_response: ${oldCfg.sanitizeEnabled} → ${newCfg.sanitizeEnabled}`);
+
+    if (JSON.stringify(oldCfg.refusalPatterns) !== JSON.stringify(newCfg.refusalPatterns)) changes.push(`refusal_patterns: ${oldCfg.refusalPatterns?.length || 0} → ${newCfg.refusalPatterns?.length || 0} rule(s)`);
 
     // fingerprint
     if (oldCfg.fingerprint.userAgent !== newCfg.fingerprint.userAgent) changes.push('fingerprint: (changed)');

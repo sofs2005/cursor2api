@@ -26,6 +26,16 @@ export async function applyVisionInterceptor(messages: AnthropicMessage[]): Prom
 
     for (const block of lastUserMsg.content) {
         if (block.type === 'image') {
+            // ★ 跳过 SVG 矢量图 — tesseract.js 无法处理 SVG，会导致进程崩溃 (#69)
+            const mediaType = (block as any).source?.media_type || '';
+            if (mediaType === 'image/svg+xml') {
+                console.log('[Vision] ⚠️ 跳过 SVG 矢量图（不支持 OCR/Vision 处理）');
+                newContent.push({
+                    type: 'text',
+                    text: '[SVG vector image was attached but cannot be processed by OCR/Vision. It likely contains a logo, icon, badge, or diagram.]',
+                });
+                continue;
+            }
             hasImages = true;
             imagesToAnalyze.push(block);
         } else {
@@ -60,6 +70,9 @@ export async function applyVisionInterceptor(messages: AnthropicMessage[]): Prom
     }
 }
 
+// ★ 不支持 OCR 的图片格式（矢量图、动画等）
+const UNSUPPORTED_OCR_TYPES = new Set(['image/svg+xml']);
+
 async function processWithLocalOCR(imageBlocks: AnthropicContentBlock[]): Promise<string> {
     const worker = await createWorker('eng+chi_sim');
     let combinedText = '';
@@ -69,6 +82,11 @@ async function processWithLocalOCR(imageBlocks: AnthropicContentBlock[]): Promis
         let imageSource: string | Buffer = '';
 
         if (img.type === 'image' && img.source) {
+            // ★ 防御性检查：跳过不支持 OCR 的格式（#69 - SVG 导致 tesseract 崩溃）
+            if (UNSUPPORTED_OCR_TYPES.has(img.source.media_type || '')) {
+                combinedText += `--- Image ${i + 1} ---\n(Skipped: ${img.source.media_type} format is not supported by OCR)\n\n`;
+                continue;
+            }
             const sourceData = img.source.data || img.source.url;
             if (img.source.type === 'base64' && sourceData) {
                 const mime = img.source.media_type || 'image/jpeg';

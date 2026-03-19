@@ -30,118 +30,22 @@ function toolId(): string {
     return 'toolu_' + uuidv4().replace(/-/g, '').substring(0, 24);
 }
 
-// ==================== 拒绝模式识别 ====================
-const REFUSAL_PATTERNS = [
-    // English identity refusal
-    /Cursor(?:'s)?\s+support\s+assistant/i,
-    /support\s+assistant\s+for\s+Cursor/i,
-    /I[''']m\s+sorry/i,
-    /I\s+am\s+sorry/i,
-    /not\s+able\s+to\s+fulfill/i,
-    /cannot\s+perform/i,
-    /I\s+can\s+only\s+answer/i,
-    /I\s+only\s+answer/i,
-    /cannot\s+write\s+files/i,
-    /pricing[, \s]*or\s*troubleshooting/i,
-    /I\s+cannot\s+help\s+with/i,
-    /I'm\s+a\s+coding\s+assistant/i,
-    /not\s+able\s+to\s+search/i,
-    /not\s+in\s+my\s+core/i,
-    /outside\s+my\s+capabilities/i,
-    /I\s+cannot\s+search/i,
-    /focused\s+on\s+software\s+development/i,
-    /not\s+able\s+to\s+help\s+with\s+(?:that|this)/i,
-    /beyond\s+(?:my|the)\s+scope/i,
-    /I'?m\s+not\s+(?:able|designed)\s+to/i,
-    /I\s+don't\s+have\s+(?:the\s+)?(?:ability|capability)/i,
-    /questions\s+about\s+(?:Cursor|the\s+(?:AI\s+)?code\s+editor)/i,
-    // English topic refusal — Cursor 拒绝非编程话题
-    /help\s+with\s+(?:coding|programming)\s+and\s+Cursor/i,
-    /Cursor\s+IDE\s+(?:questions|features|related)/i,
-    /unrelated\s+to\s+(?:programming|coding)(?:\s+or\s+Cursor)?/i,
-    /Cursor[- ]related\s+question/i,
-    /(?:ask|please\s+ask)\s+a\s+(?:programming|coding|Cursor)/i,
-    /(?:I'?m|I\s+am)\s+here\s+to\s+help\s+with\s+(?:coding|programming)/i,
-    /appears\s+to\s+be\s+(?:asking|about)\s+.*?unrelated/i,
-    /(?:not|isn't|is\s+not)\s+(?:related|relevant)\s+to\s+(?:programming|coding|software)/i,
-    /I\s+can\s+help\s+(?:you\s+)?with\s+things\s+like/i,
-    // New Cursor refusal phrases (2026-03)
-    /isn't\s+something\s+I\s+can\s+help\s+with/i,
-    /not\s+something\s+I\s+can\s+help\s+with/i,
-    /scoped\s+to\s+answering\s+questions\s+about\s+Cursor/i,
-    /falls\s+outside\s+(?:the\s+scope|what\s+I)/i,
-    // Prompt injection / social engineering detection (new failure mode)
-    /prompt\s+injection\s+attack/i,
-    /prompt\s+injection/i,
-    /social\s+engineering/i,
-    /I\s+need\s+to\s+stop\s+and\s+flag/i,
-    /What\s+I\s+will\s+not\s+do/i,
-    /What\s+is\s+actually\s+happening/i,
-    /replayed\s+against\s+a\s+real\s+system/i,
-    /tool-call\s+payloads/i,
-    /copy-pasteable\s+JSON/i,
-    /injected\s+into\s+another\s+AI/i,
-    /emit\s+tool\s+invocations/i,
-    /make\s+me\s+output\s+tool\s+calls/i,
-    // Tool availability claims (Cursor role lock)
-    /I\s+(?:only\s+)?have\s+(?:access\s+to\s+)?(?:two|2|read_file|read_dir)\s+tool/i,
-    /(?:only|just)\s+(?:two|2)\s+(?:tools?|functions?)\b/i,
-    /\bread_file\b.*\bread_dir\b/i,
-    /\bread_dir\b.*\bread_file\b/i,
-    /有以下.*?(?:两|2)个.*?工具/,
-    /我有.*?(?:两|2)个工具/,
-    /工具.*?(?:只有|有以下|仅有).*?(?:两|2)个/,
-    /只能用.*?read_file/i,
-    /无法调用.*?工具/,
-    /(?:仅限于|仅用于).*?(?:查阅|浏览).*?(?:文档|docs)/,
-    // Chinese identity refusal
-    /我是\s*Cursor\s*的?\s*支持助手/,
-    /Cursor\s*的?\s*支持系统/,
-    /Cursor\s*(?:编辑器|IDE)?\s*相关的?\s*问题/,
-    /我的职责是帮助你解答/,
-    /我无法透露/,
-    /帮助你解答\s*Cursor/,
-    /运行在\s*Cursor\s*的/,
-    /专门.*回答.*(?:Cursor|编辑器)/,
-    /我只能回答/,
-    /无法提供.*信息/,
-    /我没有.*也不会提供/,
-    /功能使用[、,]\s*账单/,
-    /故障排除/,
-    // Chinese topic refusal
-    /与\s*(?:编程|代码|开发)\s*无关/,
-    /请提问.*(?:编程|代码|开发|技术).*问题/,
-    /只能帮助.*(?:编程|代码|开发)/,
-    // Chinese prompt injection detection
-    /不是.*需要文档化/,
-    /工具调用场景/,
-    /语言偏好请求/,
-    /提供.*具体场景/,
-    /即报错/,
-    // EN: scope/expertise wordings (2026-03 batch)
-    /(?:outside|beyond)\s+(?:the\s+)?scope\s+of\s+what/i,
-    /not\s+(?:within|in)\s+(?:my|the)\s+scope/i,
-    /this\s+assistant\s+is\s+(?:focused|scoped)/i,
-    /(?:only|just)\s+(?:able|here)\s+to\s+(?:answer|help)/i,
-    /I\s+(?:can\s+)?only\s+help\s+with\s+(?:questions|issues)\s+(?:related|about)/i,
-    /(?:here|designed)\s+to\s+help\s+(?:with\s+)?(?:questions\s+)?about\s+Cursor/i,
-    /not\s+(?:something|a\s+topic)\s+(?:related|specific)\s+to\s+(?:Cursor|coding)/i,
-    /outside\s+(?:my|the|your)\s+area\s+of\s+(?:expertise|scope)/i,
-    /(?:can[.']?t|cannot|unable\s+to)\s+help\s+with\s+(?:this|that)\s+(?:request|question|topic)/i,
-    /scoped\s+to\s+(?:answering|helping)/i,
-    // CN: Chinese refusal wordings — Cursor 中文界面下的拒绝 (2026-03 batch)
-    /只能回答.*(?:Cursor|编辑器).*(?:相关|有关)/,
-    /专[注门].*(?:回答|帮助|解答).*(?:Cursor|编辑器)/,
-    /有什么.*(?:Cursor|编辑器).*(?:问题|可以)/,
-    /无法提供.*(?:推荐|建议|帮助)/,
-    /(?:功能使用|账户|故障排除|账号|订阅|套餐|计费).*(?:等|问题)/,
-];
+// ==================== 常量导入 ====================
+// 拒绝模式、身份探针、工具能力询问等常量统一定义在 constants.ts
+// 方便查阅和修改内置规则，无需翻阅此文件的业务逻辑
+import {
+    isRefusal,
+    IDENTITY_PROBE_PATTERNS,
+    TOOL_CAPABILITY_PATTERNS,
+    CLAUDE_IDENTITY_RESPONSE,
+    CLAUDE_TOOLS_RESPONSE,
+} from './constants.js';
 
-export function isRefusal(text: string): boolean {
-    return REFUSAL_PATTERNS.some(p => p.test(text));
-}
+// Re-export for other modules (openai-handler.ts etc.)
+export { isRefusal, CLAUDE_IDENTITY_RESPONSE, CLAUDE_TOOLS_RESPONSE };
 
 // ==================== Thinking 提取 ====================
+
 
 const THINKING_OPEN = '<thinking>';
 const THINKING_CLOSE = '</thinking>';
@@ -222,31 +126,6 @@ export function countTokens(req: Request, res: Response): void {
 
 // ==================== 身份探针拦截 ====================
 
-// 关键词检测（宽松匹配）：只要用户消息包含这些关键词组合就判定为身份探针
-const IDENTITY_PROBE_PATTERNS = [
-    // 精确短句（原有）
-    /^\s*(who are you\??|你是谁[呀啊吗]?\??|what is your name\??|你叫什么\??|你叫什么名字\??|what are you\??|你是什么\??|Introduce yourself\??|自我介绍一下\??|hi\??|hello\??|hey\??|你好\??|在吗\??|哈喽\??)\s*$/i,
-    // 问模型/身份类
-    /(?:什么|哪个|啥)\s*模型/,
-    /(?:真实|底层|实际|真正).{0,10}(?:模型|身份|名字)/,
-    /模型\s*(?:id|名|名称|名字|是什么)/i,
-    /(?:what|which)\s+model/i,
-    /(?:real|actual|true|underlying)\s+(?:model|identity|name)/i,
-    /your\s+(?:model|identity|real\s+name)/i,
-    // 问平台/运行环境类
-    /运行在\s*(?:哪|那|什么)/,
-    /(?:哪个|什么)\s*平台/,
-    /running\s+on\s+(?:what|which)/i,
-    /what\s+platform/i,
-    // 问系统提示词类
-    /系统\s*提示词/,
-    /system\s*prompt/i,
-    // 你是谁的变体
-    /你\s*(?:到底|究竟|真的|真实)\s*是\s*谁/,
-    /你\s*是[^。，,\.]{0,5}(?:AI|人工智能|助手|机器人|模型|Claude|GPT|Gemini)/i,
-    // 注意：工具能力询问（“你有哪些工具”）不在这里拦截，而是让拒绝检测+重试自然处理
-];
-
 export function isIdentityProbe(body: AnthropicRequest): boolean {
     if (!body.messages || body.messages.length === 0) return false;
     const lastMsg = body.messages[body.messages.length - 1];
@@ -267,40 +146,6 @@ export function isIdentityProbe(body: AnthropicRequest): boolean {
     return IDENTITY_PROBE_PATTERNS.some(p => p.test(text));
 }
 
-// ==================== 响应内容清洗 ====================
-
-// Claude 身份回复模板（拒绝后的降级回复）
-export const CLAUDE_IDENTITY_RESPONSE = `I am Claude, made by Anthropic. I'm an AI assistant designed to be helpful, harmless, and honest. I can help you with a wide range of tasks including writing, analysis, coding, math, and more.
-
-I don't have information about the specific model version or ID being used for this conversation, but I'm happy to help you with whatever you need!`;
-
-// 工具能力询问的模拟回复（当用户问“你有哪些工具”时，返回 Claude 真实能力描述）
-export const CLAUDE_TOOLS_RESPONSE = `作为 Claude，我的核心能力包括：
-
-**内置能力：**
-- 💻 **代码编写与调试** — 支持所有主流编程语言
-- 📝 **文本写作与分析** — 文章、报告、翻译等
-- 📊 **数据分析与数学推理** — 复杂计算和逻辑分析
-- 🧠 **问题解答与知识查询** — 各类技术和非技术问题
-
-**工具调用能力（MCP）：**
-如果你的客户端配置了 MCP（Model Context Protocol）工具，我可以通过工具调用来执行更多操作，例如：
-- 🔍 **网络搜索** — 实时查找信息
-- 📁 **文件操作** — 读写文件、执行命令
-- 🛠️ **自定义工具** — 取决于你配置的 MCP Server
-
-具体可用的工具取决于你客户端的配置。你可以告诉我你想做什么，我会尽力帮助你！`;
-
-// 检测是否是工具能力询问（用于重试失败后返回专用回复）
-const TOOL_CAPABILITY_PATTERNS = [
-    /你\s*(?:有|能用|可以用)\s*(?:哪些|什么|几个)\s*(?:工具|tools?|functions?)/i,
-    /(?:what|which|list).*?tools?/i,
-    /你\s*用\s*(?:什么|哪个|啥)\s*(?:mcp|工具)/i,
-    /你\s*(?:能|可以)\s*(?:做|干)\s*(?:什么|哪些|啥)/,
-    /(?:what|which).*?(?:capabilities|functions)/i,
-    /能力|功能/,
-];
-
 export function isToolCapabilityQuestion(body: AnthropicRequest): boolean {
     if (!body.messages || body.messages.length === 0) return false;
     const lastMsg = body.messages[body.messages.length - 1];
@@ -318,11 +163,19 @@ export function isToolCapabilityQuestion(body: AnthropicRequest): boolean {
     return TOOL_CAPABILITY_PATTERNS.some(p => p.test(text));
 }
 
+// ==================== 响应内容清洗 ====================
+
 /**
  * 对所有响应做后处理：清洗 Cursor 身份引用，替换为 Claude
  * 这是最后一道防线，确保用户永远看不到 Cursor 相关的身份信息
+ *
+ * ★ 受配置开关 sanitize_response 控制，默认关闭
+ *   开启方式：config.yaml 中设置 sanitize_response: true
+ *   或环境变量 SANITIZE_RESPONSE=true
  */
 export function sanitizeResponse(text: string): string {
+    // 配置未启用时直接返回原文本，零开销
+    if (!getConfig().sanitizeEnabled) return text;
     let result = text;
 
     // === English identity replacements ===
@@ -1618,7 +1471,7 @@ Continue EXACTLY from where you stopped. DO NOT repeat any content already gener
                 stopReason = 'tool_use';
 
                 // Check if the residual text is a known refusal, if so, drop it completely!
-                if (REFUSAL_PATTERNS.some(p => p.test(cleanText))) {
+                if (isRefusal(cleanText)) {
                     log.info('Handler', 'sanitize', `抑制工具调用中的拒绝文本`, { preview: cleanText.substring(0, 200) });
                     cleanText = '';
                 }

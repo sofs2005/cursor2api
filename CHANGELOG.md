@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.7.5 (2026-03-19)
+
+### 🏗️ 常量集中管理
+
+- **新增 `constants.ts`**：将 `REFUSAL_PATTERNS`（50+ 条拒绝检测规则）、`IDENTITY_PROBE_PATTERNS`、`TOOL_CAPABILITY_PATTERNS`、`CLAUDE_IDENTITY_RESPONSE`、`CLAUDE_TOOLS_RESPONSE` 及自定义拒绝规则逻辑从 `handler.ts` 提取到独立文件
+- **提升可维护性**：贡献者修改内置规则时只需查看 `constants.ts`，无需翻阅 2000 行的 handler 业务逻辑
+- **`isRefusal()` 函数统一导出**：内置规则 + 自定义规则合并检测，所有调用点自动生效
+
+### 🔧 自定义拒绝检测规则
+
+- **`config.yaml` 新增 `refusal_patterns` 字段**：用户可添加自定义正则匹配规则，追加到内置列表之后（不替换），匹配到即触发重试逻辑
+- **无效正则容错**：无效的正则表达式自动退化为字面量匹配，不会导致服务报错
+- **缓存编译**：自定义规则只在配置变更时重新编译 RegExp，运行时零开销
+- **热重载支持**：修改后下一次请求即生效
+
+### 🔀 响应内容清洗开关
+
+- **`config.yaml` 新增 `sanitize_response` 字段**：控制 `sanitizeResponse()` 函数（将 Cursor 身份引用替换为 Claude），**默认关闭**
+- **环境变量支持**：`SANITIZE_RESPONSE=true` 可覆盖配置文件
+- **零开销设计**：关闭时函数入口直接返回原文本，无正则计算
+- **热重载支持**：修改配置后立即生效
+
+---
+
 ## v2.7.4 (2026-03-18)
 
 ### 🛡️ 截断安全 — 防止损坏的工具调用
