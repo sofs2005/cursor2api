@@ -250,6 +250,12 @@ export function sanitizeResponse(text: string): string {
     result = result.replace(/\*\*`?read_dir`?\*\*[^\n]*\n(?:[^\n]*\n){0,3}/gi, '');
     result = result.replace(/\d+\.\s*\*\*`?read_(?:file|dir)`?\*\*[^\n]*/gi, '');
     result = result.replace(/[⚠注意].*?(?:不是|并非|无法).*?(?:本地文件|代码库|执行代码)[^。\n]*[。]?\s*/g, '');
+    // 中文: "只有读取 Cursor 文档的工具" / "无法访问本地文件系统" 等新措辞清洗
+    result = result.replace(/[^。\n]*只有.*?读取.*?(?:Cursor|文档).*?工具[^。\n]*[。]?\s*/g, '');
+    result = result.replace(/[^。\n]*无法访问.*?本地文件[^。\n]*[。]?\s*/g, '');
+    result = result.replace(/[^。\n]*无法.*?执行命令[^。\n]*[。]?\s*/g, '');
+    result = result.replace(/[^。\n]*需要在.*?Claude\s*Code[^。\n]*[。]?\s*/gi, '');
+    result = result.replace(/[^。\n]*当前环境.*?只有.*?工具[^。\n]*[。]?\s*/g, '');
     // === Hallucination about accidentally calling Cursor internal tools ===
     // "I accidentally called the Cursor documentation read_dir tool." -> remove entire sentence
     result = result.replace(/[^\n.!?]*(?:accidentally|mistakenly|keep|sorry|apologies|apologize)[^\n.!?]*(?:called|calling|used|using)[^\n.!?]*Cursor[^\n.!?]*tool[^\n.!?]*[.!?]\s*/gi, '');
@@ -786,6 +792,7 @@ async function handleDirectTextStream(
     let finalVisibleText = '';
     let finalThinkingContent = '';
     let streamer = createIncrementalTextStreamer({
+        warmupChars: 300,   // ★ 与工具模式对齐：前 300 chars 不释放，确保拒绝检测完成后再流
         transform: sanitizeResponse,
         isBlockedPrefix: (text) => isRefusal(text.substring(0, 300)),
     });
@@ -802,6 +809,7 @@ async function handleDirectTextStream(
         let leadingResolved = false;
         let thinkingContent = '';
         const attemptStreamer = createIncrementalTextStreamer({
+            warmupChars: 300,   // ★ 与工具模式对齐
             transform: sanitizeResponse,
             isBlockedPrefix: (text) => isRefusal(text.substring(0, 300)),
         });
