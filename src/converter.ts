@@ -11,6 +11,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { resolve as pathResolve } from 'path';
+import { createHash } from 'crypto';
 
 import { v4 as uuidv4 } from 'uuid';
 import type {
@@ -606,7 +607,7 @@ export async function convertToCursorRequest(req: AnthropicRequest): Promise<Cur
 
     return {
         model: config.cursorModel,
-        id: shortId(),
+        id: deriveConversationId(req),
         messages,
         trigger: 'submit-message',
     };
@@ -1076,6 +1077,43 @@ export function isToolCallComplete(text: string): boolean {
 
 function shortId(): string {
     return uuidv4().replace(/-/g, '').substring(0, 16);
+}
+
+/**
+ * ★ 会话隔离：根据请求内容派生确定性的会话 ID (#56)
+ * 
+ * 问题：之前每次请求都生成随机 ID，导致 Cursor 后端无法正确追踪会话边界，
+ *       CC 执行 /clear 或 /new 后旧会话的上下文仍然残留。
+ * 
+ * 策略：基于系统提示词 + 第一条用户消息的内容哈希生成 16 位 hex ID
+ *   - 同一逻辑会话（相同的系统提示词 + 首条消息）→ 同一 ID → Cursor 正确追踪
+ *   - /clear 或 /new 后消息不同 → 不同 ID → Cursor 视为全新会话，无上下文残留
+ *   - 不同工具集/模型配置不影响 ID（这些是 proxy 层面的差异，非会话差异）
+ */
+function deriveConversationId(req: AnthropicRequest): string {
+    const hash = createHash('sha256');
+
+    // 用系统提示词作为会话指纹的一部分
+    if (req.system) {
+        const systemStr = typeof req.system === 'string'
+            ? req.system
+            : req.system.filter(b => b.type === 'text').map(b => b.text).join('\n');
+        hash.update(systemStr.substring(0, 500)); // 取前 500 字符足以区分不同 system prompt
+    }
+
+    // 用第一条用户消息作为主要指纹
+    // CC 的 /clear 会清空所有历史，所以新会话的第一条消息一定不同
+    if (req.messages && req.messages.length > 0) {
+        const firstUserMsg = req.messages.find(m => m.role === 'user');
+        if (firstUserMsg) {
+            const content = typeof firstUserMsg.content === 'string'
+                ? firstUserMsg.content
+                : JSON.stringify(firstUserMsg.content);
+            hash.update(content.substring(0, 1000)); // 取前 1000 字符
+        }
+    }
+
+    return hash.digest('hex').substring(0, 16);
 }
 
 function normalizeFileUrlToLocalPath(url: string): string {
