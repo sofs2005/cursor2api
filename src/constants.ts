@@ -85,6 +85,10 @@ export const REFUSAL_PATTERNS: RegExp[] = [
     /(?:can[.']?t|cannot|unable\s+to)\s+help\s+with\s+(?:this|that)\s+(?:request|question|topic)/i,
     /scoped\s+to\s+(?:answering|helping)/i,
 
+    // ── English: Cursor support assistant context leak (2026-03) ──
+    /currently\s+in\s+(?:the\s+)?Cursor\s+(?:support\s+)?(?:assistant\s+)?context/i,
+    /it\s+appears\s+I['']?m\s+currently\s+in\s+the\s+Cursor/i,
+
     // ── 中文: 身份拒绝 ──
     /我是\s*Cursor\s*的?\s*支持助手/,
     /Cursor\s*的?\s*支持系统/,

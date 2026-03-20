@@ -11,7 +11,7 @@ import express from 'express';
 import { getConfig, initConfigWatcher, stopConfigWatcher } from './config.js';
 import { handleMessages, listModels, countTokens } from './handler.js';
 import { handleOpenAIChatCompletions, handleOpenAIResponses } from './openai-handler.js';
-import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetPayload, apiLogsStream, serveLogViewerLogin, apiClearLogs } from './log-viewer.js';
+import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetPayload, apiLogsStream, serveLogViewerLogin, apiClearLogs, serveVueApp } from './log-viewer.js';
 import { loadLogsFromFiles } from './logger.js';
 
 // 从 package.json 读取版本号，统一来源，避免多处硬编码
@@ -64,6 +64,8 @@ const logViewerAuth = (req: express.Request, res: express.Response, next: expres
 
 // ★ 日志查看器路由（带鉴权）
 app.get('/logs', logViewerAuth, serveLogViewer);
+// Vue3 日志 UI（无服务端鉴权，由 Vue 应用内部处理）
+app.get('/vuelogs', serveVueApp);
 app.get('/api/logs', logViewerAuth, apiGetLogs);
 app.get('/api/requests', logViewerAuth, apiGetRequests);
 app.get('/api/stats', logViewerAuth, apiGetStats);
@@ -134,6 +136,7 @@ app.get('/', (_req, res) => {
             models: 'GET /v1/models',
             health: 'GET /health',
             log_viewer: 'GET /logs',
+            log_viewer_vue: 'GET /vuelogs',
         },
         usage: {
             claude_code: 'export ANTHROPIC_BASE_URL=http://localhost:' + config.port,
@@ -156,12 +159,18 @@ app.listen(config.port, () => {
     const toolsCfg = config.tools;
     let toolsInfo = 'default (full, desc=full)';
     if (toolsCfg) {
-        const parts: string[] = [];
-        parts.push(`schema=${toolsCfg.schemaMode}`);
-        parts.push(toolsCfg.descriptionMaxLength === 0 ? 'desc=full' : `desc≤${toolsCfg.descriptionMaxLength}`);
-        if (toolsCfg.includeOnly?.length) parts.push(`whitelist=${toolsCfg.includeOnly.length}`);
-        if (toolsCfg.exclude?.length) parts.push(`blacklist=${toolsCfg.exclude.length}`);
-        toolsInfo = parts.join(', ');
+        if (toolsCfg.disabled) {
+            toolsInfo = '\x1b[33mdisabled\x1b[0m (不注入工具定义，节省上下文)';
+        } else if (toolsCfg.passthrough) {
+            toolsInfo = '\x1b[36mpassthrough\x1b[0m (原始 JSON 嵌入)';
+        } else {
+            const parts: string[] = [];
+            parts.push(`schema=${toolsCfg.schemaMode}`);
+            parts.push(toolsCfg.descriptionMaxLength === 0 ? 'desc=full' : `desc≤${toolsCfg.descriptionMaxLength}`);
+            if (toolsCfg.includeOnly?.length) parts.push(`whitelist=${toolsCfg.includeOnly.length}`);
+            if (toolsCfg.exclude?.length) parts.push(`blacklist=${toolsCfg.exclude.length}`);
+            toolsInfo = parts.join(', ');
+        }
     }
     
     console.log('');
@@ -172,6 +181,7 @@ app.listen(config.port, () => {
     console.log(`  ├─ Tools:   ${toolsInfo}`);
     console.log(`  ├─ Logging: ${logPersist}`);
     console.log(`  └─ Logs:    \x1b[35mhttp://localhost:${config.port}/logs\x1b[0m`);
+    console.log(`  └─ Logs Vue3: \x1b[35mhttp://localhost:${config.port}/vuelogs\x1b[0m`);
     console.log('');
 
     // ★ 启动 config.yaml 热重载监听

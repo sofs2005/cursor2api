@@ -256,6 +256,18 @@ export function sanitizeResponse(text: string): string {
     result = result.replace(/[^。\n]*无法.*?执行命令[^。\n]*[。]?\s*/g, '');
     result = result.replace(/[^。\n]*需要在.*?Claude\s*Code[^。\n]*[。]?\s*/gi, '');
     result = result.replace(/[^。\n]*当前环境.*?只有.*?工具[^。\n]*[。]?\s*/g, '');
+
+    // === Cursor support assistant context leak (2026-03 批次, P0) ===
+    // Pattern: "I apologize - it appears I'm currently in the Cursor support assistant context where only `read_file` and `read_dir` tools are available."
+    // 整段从 "I apologize" / "I'm sorry" 到 "read_file" / "read_dir" 结尾全部删除
+    result = result.replace(/I\s+apologi[sz]e\s*[-–—]?\s*it\s+appears\s+I[''']?m\s+currently\s+in\s+the\s+Cursor[\s\S]*?(?:available|context)[.!]?\s*/gi, '');
+    // Broader: any sentence mentioning "Cursor support assistant context"
+    result = result.replace(/[^\n.!?]*(?:currently\s+in|running\s+in|operating\s+in)\s+(?:the\s+)?Cursor\s+(?:support\s+)?(?:assistant\s+)?context[^\n.!?]*[.!?]?\s*/gi, '');
+    // "where only read_file and read_dir tools are available" standalone
+    result = result.replace(/[^\n.!?]*where\s+only\s+[`"']?read_file[`"']?\s+and\s+[`"']?read_dir[`"']?[^\n.!?]*[.!?]?\s*/gi, '');
+    // "However, based on the tool call results shown" → the recovery paragraph after the leak, also strip
+    result = result.replace(/However,\s+based\s+on\s+the\s+tool\s+call\s+results\s+shown[^\n.!?]*[.!?]?\s*/gi, '');
+
     // === Hallucination about accidentally calling Cursor internal tools ===
     // "I accidentally called the Cursor documentation read_dir tool." -> remove entire sentence
     result = result.replace(/[^\n.!?]*(?:accidentally|mistakenly|keep|sorry|apologies|apologize)[^\n.!?]*(?:called|calling|used|using)[^\n.!?]*Cursor[^\n.!?]*tool[^\n.!?]*[.!?]\s*/gi, '');
@@ -1450,11 +1462,32 @@ Continue EXACTLY from where you stopped. DO NOT repeat any content already gener
                 toolChoiceRetry++;
                 log.warn('Handler', 'retry', `tool_choice=any 但模型未调用工具（第${toolChoiceRetry}次），强制重试`);
 
-                // 在现有 Cursor 请求中追加强制 user 消息（不重新转换整个请求，代价最小）
+                // ★ 增强版强制消息：包含可用工具名 + 具体格式示例
+                const availableTools = body.tools || [];
+                const toolNameList = availableTools.slice(0, 15).map((t: any) => t.name).join(', ');
+                const primaryTool = availableTools.find((t: any) => /^(write_to_file|Write|WriteFile)$/i.test(t.name));
+                const exTool = primaryTool?.name || availableTools[0]?.name || 'write_to_file';
+
                 const forceMsg: CursorMessage = {
                     parts: [{
                         type: 'text',
-                        text: `Your last response did not include any \`\`\`json action block. This is required because tool_choice is "any". You MUST respond using the json action format for at least one action. Do not explain yourself — just output the action block now.`,
+                        text: `I notice your previous response was plain text without a tool call. Just a quick reminder: in this environment, every response needs to include at least one \`\`\`json action\`\`\` block — that's how tools are invoked here.
+
+Here are the tools you have access to: ${toolNameList}
+
+The format looks like this:
+
+\`\`\`json action
+{
+  "tool": "${exTool}",
+  "parameters": {
+    "path": "filename.py",
+    "content": "# file content here"
+  }
+}
+\`\`\`
+
+Please go ahead and pick the most appropriate tool for the current task and output the action block.`,
                     }],
                     id: uuidv4(),
                     role: 'user',
@@ -1827,6 +1860,12 @@ Continue EXACTLY from where you stopped. DO NOT repeat any content already gener
             toolChoiceRetry++;
             log.warn('Handler', 'retry', `非流式 tool_choice=any 但模型未调用工具（第${toolChoiceRetry}次），强制重试`);
 
+            // ★ 增强版强制消息（与流式路径对齐）
+            const availableToolsNS = body.tools || [];
+            const toolNameListNS = availableToolsNS.slice(0, 15).map((t: any) => t.name).join(', ');
+            const primaryToolNS = availableToolsNS.find((t: any) => /^(write_to_file|Write|WriteFile)$/i.test(t.name));
+            const exToolNS = primaryToolNS?.name || availableToolsNS[0]?.name || 'write_to_file';
+
             const forceMessages = [
                 ...activeCursorReq.messages,
                 {
@@ -1837,7 +1876,23 @@ Continue EXACTLY from where you stopped. DO NOT repeat any content already gener
                 {
                     parts: [{
                         type: 'text' as const,
-                        text: `Your last response did not include any \`\`\`json action block. This is required because tool_choice is "any". You MUST respond using the json action format for at least one action. Do not explain yourself — just output the action block now.`,
+                        text: `I notice your previous response was plain text without a tool call. Just a quick reminder: in this environment, every response needs to include at least one \`\`\`json action\`\`\` block — that's how tools are invoked here.
+
+Here are the tools you have access to: ${toolNameListNS}
+
+The format looks like this:
+
+\`\`\`json action
+{
+  "tool": "${exToolNS}",
+  "parameters": {
+    "path": "filename.py",
+    "content": "# file content here"
+  }
+}
+\`\`\`
+
+Please go ahead and pick the most appropriate tool for the current task and output the action block.`,
                     }],
                     id: uuidv4(),
                     role: 'user' as const,
