@@ -60,6 +60,25 @@ export interface Stats {
   avgTTFT: number;
 }
 
+/** 可热重载的配置（snake_case，对应 yaml 键名） */
+export interface HotConfig {
+  cursor_model: string;
+  timeout: number;
+  max_auto_continue: number;
+  max_history_messages: number;
+  thinking: { enabled: boolean } | null;
+  compression: { enabled: boolean; level: 1 | 2 | 3; keep_recent: number; early_msg_max_chars: number };
+  tools: { schema_mode: 'compact' | 'full' | 'names_only'; description_max_length: number; passthrough?: boolean; disabled?: boolean };
+  sanitize_response: boolean;
+  refusal_patterns: string[];
+  logging: { file_enabled: boolean; dir: string; max_days: number; persist_mode: 'compact' | 'full' | 'summary' };
+}
+
+export interface SaveConfigResult {
+  ok: boolean;
+  changes: string[];
+}
+
 /** 对应后端 RequestPayload */
 export interface Payload {
   // 原始请求
@@ -70,6 +89,11 @@ export interface Payload {
   // 转换后请求
   cursorRequest?: unknown;
   cursorMessages?: Array<{ role: string; contentPreview: string; contentLength: number }>;
+  // 摘要字段
+  question?: string;
+  answer?: string;
+  answerType?: string;
+  toolCallNames?: string[];
   // 模型响应
   rawResponse?: string;
   finalResponse?: string;

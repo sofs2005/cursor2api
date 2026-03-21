@@ -1,4 +1,4 @@
-import type { LogEntry, RequestSummary, Stats, Payload } from './types';
+import type { LogEntry, RequestSummary, Stats, Payload, HotConfig, SaveConfigResult } from './types';
 import { useAuthStore } from './stores/auth';
 import { getActivePinia } from 'pinia';
 
@@ -44,6 +44,25 @@ export async function clearLogs(): Promise<void> {
     headers: getAuthHeader(),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export function fetchConfig(): Promise<HotConfig> {
+  return apiFetch<HotConfig>('/api/config');
+}
+
+export async function saveConfig(cfg: Partial<HotConfig>): Promise<SaveConfigResult> {
+  const res = await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+    body: JSON.stringify(cfg),
+  });
+  if (res.status === 401) {
+    const pinia = getActivePinia();
+    if (pinia) useAuthStore(pinia).logout();
+    throw new Error('HTTP 401');
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<SaveConfigResult>;
 }
 
 export function createSSEConnection(onMessage: (event: string, data: unknown) => void): EventSource {

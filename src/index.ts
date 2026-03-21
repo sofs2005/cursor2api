@@ -12,6 +12,7 @@ import { getConfig, initConfigWatcher, stopConfigWatcher } from './config.js';
 import { handleMessages, listModels, countTokens } from './handler.js';
 import { handleOpenAIChatCompletions, handleOpenAIResponses } from './openai-handler.js';
 import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetPayload, apiLogsStream, serveLogViewerLogin, apiClearLogs, serveVueApp } from './log-viewer.js';
+import { apiGetConfig, apiSaveConfig } from './config-api.js';
 import { loadLogsFromFiles } from './logger.js';
 
 // 从 package.json 读取版本号，统一来源，避免多处硬编码
@@ -72,6 +73,8 @@ app.get('/api/stats', logViewerAuth, apiGetStats);
 app.get('/api/payload/:requestId', logViewerAuth, apiGetPayload);
 app.get('/api/logs/stream', logViewerAuth, apiLogsStream);
 app.post('/api/logs/clear', logViewerAuth, apiClearLogs);
+app.get('/api/config', logViewerAuth, apiGetConfig);
+app.post('/api/config', logViewerAuth, apiSaveConfig);
 
 // ★ API 鉴权中间件：配置了 authTokens 则需要 Bearer token
 app.use((req, res, next) => {
