@@ -248,14 +248,18 @@ async function sendCursorRequestInner(
 }
 
 /**
- * 发送非流式请求，收集完整响应
+ * 发送非流式请求，收集完整响应及 usage 信息
  */
-export async function sendCursorRequestFull(req: CursorChatRequest): Promise<string> {
+export async function sendCursorRequestFull(req: CursorChatRequest): Promise<{ text: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } }> {
     let fullText = '';
+    let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
     await sendCursorRequest(req, (event) => {
         if (event.type === 'text-delta' && event.delta) {
             fullText += event.delta;
         }
+        if (event.messageMetadata?.usage) {
+            usage = event.messageMetadata.usage;
+        }
     });
-    return fullText;
+    return { text: fullText, usage };
 }

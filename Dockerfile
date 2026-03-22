@@ -21,6 +21,9 @@ WORKDIR /app
 # 设置为生产环境
 ENV NODE_ENV=production
 
+# 增大 Node.js 堆内存上限，防止日志文件过大时加载 OOM（tesseract.js / js-tiktoken 初始化也有一定内存需求）
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
 # 出于安全考虑，避免使用 root 用户运行服务
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 cursor

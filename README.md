@@ -82,6 +82,8 @@ cp config.yaml.example config.yaml
 | `logging.max_days` | 日志保留天数 | `7` |
 | `logging.persist_mode` | 日志落盘模式：`summary` 问答摘要 / `compact` 精简 / `full` 完整 | `summary` |
 | `max_auto_continue` | 截断自动续写次数 (`0`=禁用，交由客户端续写) | `0` |
+| `max_history_messages` | 历史消息条数上限，超出时删除最早消息（建议改用 `max_history_tokens`） | `-1`（不限制） |
+| `max_history_tokens` | 历史消息 token 数上限（推荐），代码自动补偿 Cursor 后端开销（1,300 基础 + 工具 tokenizer 差异），参考值 `130000~170000` | `150000` |
 | `sanitize_response` | 响应内容清洗开关（替换 Cursor 身份引用为 Claude） | `false` |
 | `refusal_patterns` | 自定义拒绝检测规则列表（追加到内置规则） | 不配置 |
 | `tools.passthrough` | 🆕 透传模式：跳过 few-shot 注入，原始 JSON 嵌入（Roo Code/Cline 推荐） | `false` |
@@ -241,6 +243,8 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 
 | 环境变量 | 说明 |
 |----------|------|
+> ⚠️ **环境变量优先级高于 `config.yaml`**：若在 docker-compose 等环境中设置了环境变量，该参数的 `config.yaml` 配置会被覆盖，热重载对其**无效**。需要通过 `config.yaml` 动态调整的参数，请勿同时在环境变量中设置。
+
 | `PORT` | 服务端口 |
 | `AUTH_TOKEN` | API 鉴权 token（逗号分隔多个） |
 | `PROXY` | 全局代理地址 |
@@ -251,6 +255,8 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 | `LOG_FILE_ENABLED` | 日志文件持久化 (`true`/`false`) |
 | `LOG_DIR` | 日志文件目录 |
 | `MAX_AUTO_CONTINUE` | 截断自动续写次数 (`0`=禁用) |
+| `MAX_HISTORY_MESSAGES` | 历史消息条数上限（`-1`=不限制） |
+| `MAX_HISTORY_TOKENS` | 历史消息 token 数上限（默认 `150000`，`-1`=不限制，参考值 `130000~170000`，代码自动补偿 Cursor 后端开销） |
 | `SANITIZE_RESPONSE` | 响应内容清洗开关 (`true`/`false`，默认 `false`) |
 | `TOOLS_PASSTHROUGH` | 🆕 工具透传模式 (`true`/`false`，默认 `false`) |
 | `TOOLS_DISABLED` | 🆕 工具禁用模式 (`true`/`false`，默认 `false`) |

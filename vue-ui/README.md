@@ -135,7 +135,8 @@ open http://localhost:3010/vuelogs
 | 基础 | `cursor_model` | 使用的 Cursor 模型 |
 | 基础 | `timeout` | 请求超时（秒） |
 | 基础 | `max_auto_continue` | 自动续写次数 |
-| 基础 | `max_history_messages` | 历史消息条数上限 |
+| 基础 | `max_history_messages` | 历史消息条数上限（建议改用 max_history_tokens） |
+| 基础 | `max_history_tokens` | 历史消息 token 数上限（推荐），代码自动补偿 Cursor 后端开销（1,300 基础 + 工具 tokenizer 差异，动态计算），参考值 130000~170000，默认 150000 |
 | 功能 | `thinking.enabled` | Thinking 模式（跟随客户端/强制关闭/强制开启） |
 | 功能 | `sanitize_response` | 响应内容清洗 |
 | 历史压缩 | `compression.*` | 压缩开关、级别、保留条数等 |

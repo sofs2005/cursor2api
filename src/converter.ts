@@ -24,6 +24,7 @@ import type {
     ParsedToolCall,
 } from './types.js';
 import { getConfig } from './config.js';
+import { estimateTokens } from './tokenizer.js';
 import { applyVisionInterceptor } from './vision.js';
 import { fixToolCallArguments } from './tool-fixer.js';
 import { getVisionProxyFetchOptions } from './proxy-agent.js';
@@ -672,6 +673,51 @@ I will ALWAYS use this exact \`\`\`json action\`\`\` block format for tool calls
             const toRemove = userMessages - maxHistoryMessages;
             messages.splice(fewShotOffset, toRemove);
             console.log(`[Converter] 历史消息裁剪: ${userMessages} → ${maxHistoryMessages} 条 (移除了最早的 ${toRemove} 条)`);
+        }
+    }
+
+    // ★ 历史消息 token 数硬限制（比条数限制更精准）
+    // 优先扣除系统提示和工具定义的 token 占用，剩余额度从最早消息开始整条删除
+    const maxHistoryTokens = config.maxHistoryTokens;
+    if (maxHistoryTokens >= 0) {
+        const fewShotOffset2 = hasTools ? 2 : 0;
+
+        // 直接对已构建的 few-shot 消息（系统提示+工具定义+few-shot回复）调用 estimateTokens
+        // 比 tools.length*70+350 更准确，因为实际注入文字已经在 messages[0..fewShotOffset2-1] 中
+        let overhead = 0;
+        for (let i = 0; i < fewShotOffset2; i++) {
+            overhead += estimateTokens(messages[i].parts.map(p => p.text ?? '').join(''));
+        }
+        // Cursor 后端额外开销：基础隐藏系统提示（实测约 1300 tokens）+ 工具 tokenizer 差异
+        // 注意：工具定义已通过 buildToolInstructions 转为文本注入 messages[0]，并已在上方 estimateTokens 中计算
+        // Cursor 后端对工具的额外 tokenizer 差异与 schema_mode 强相关：
+        //   compact模式 ~20 tokens/工具，full模式 ~240 tokens/工具，names_only ~5 tokens/工具
+        // 输出空间不在此预留，由用户通过 max_history_tokens 自行控制
+        const toolCount = req.tools?.length ?? 0;
+        const schemaMode = getConfig().tools?.schemaMode ?? 'compact';
+        const perToolOverhead = schemaMode === 'full' ? 240 : (schemaMode === 'names_only' ? 5 : 20);
+        overhead += 1300 + toolCount * perToolOverhead;
+
+        const historyBudget = Math.max(0, maxHistoryTokens - overhead);
+
+        // 从最新消息往前累加，找到超出预算的边界
+        let usedTokens = 0;
+        let keepFrom = fewShotOffset2;
+        for (let i = messages.length - 1; i >= fewShotOffset2; i--) {
+            const msgChars = messages[i].parts.reduce((s, p) => s + (p.text?.length ?? 0), 0);
+            const msgTokens = estimateTokens(messages[i].parts.map(p => p.text ?? '').join(''));
+            if (usedTokens + msgTokens > historyBudget) {
+                keepFrom = i + 1;
+                break;
+            }
+            usedTokens += msgTokens;
+            keepFrom = i;
+        }
+
+        if (keepFrom > fewShotOffset2) {
+            const removed = keepFrom - fewShotOffset2;
+            messages.splice(fewShotOffset2, removed);
+            console.log(`[Converter] token 预算裁剪: 移除最早 ${removed} 条消息，保留 ~${usedTokens} tokens (预算 ${historyBudget} tokens，系统开销 ${overhead} tokens)`);
         }
     }
 

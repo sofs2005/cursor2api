@@ -38,7 +38,8 @@ services:
 
       # ── 自动续写 & 历史消息限制 ──
       # - MAX_AUTO_CONTINUE=0          # 截断后自动续写次数，0=禁用(默认)
-      # - MAX_HISTORY_MESSAGES=-1      # 历史消息条数上限，-1=不限制
+      # - MAX_HISTORY_MESSAGES=-1      # 历史消息条数上限，-1=不限制（建议改用 MAX_HISTORY_TOKENS）
+      # - MAX_HISTORY_TOKENS=150000     # 历史消息 token 数上限（推荐），默认 150000，参考值 130000~170000（代码自动补偿 Cursor 后端开销）
 
       # ── 日志持久化 ──
       # - LOG_FILE_ENABLED=true
