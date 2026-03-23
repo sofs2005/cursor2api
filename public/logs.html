@@ -14,8 +14,9 @@
     <h1><span class="ic">⚡</span> Cursor2API 日志</h1>
     <div class="hdr-stats">
       <div class="sc"><b id="sT">0</b>请求</div>
-      <div class="sc">✓<b id="sS">0</b></div>
-      <div class="sc">✗<b id="sE">0</b></div>
+      <div class="sc sc-ok">✓<b id="sS">0</b></div>
+      <div class="sc sc-deg">!<b id="sD">0</b></div>
+      <div class="sc sc-err">✗<b id="sE">0</b></div>
       <div class="sc"><b id="sA">-</b>ms 均耗</div>
       <div class="sc">⚡<b id="sF">-</b>ms TTFT</div>
     </div>
@@ -38,6 +39,7 @@
       <div class="fbar" id="fbar">
         <button class="fb a" data-f="all" onclick="fR('all',this)">全部<span class="fc" id="cA">0</span></button>
         <button class="fb" data-f="success" onclick="fR('success',this)">✓<span class="fc" id="cS">0</span></button>
+        <button class="fb" data-f="degraded" onclick="fR('degraded',this)">!<span class="fc" id="cD">0</span></button>
         <button class="fb" data-f="error" onclick="fR('error',this)">✗<span class="fc" id="cE">0</span></button>
         <button class="fb" data-f="processing" onclick="fR('processing',this)">◌<span class="fc" id="cP">0</span></button>
         <button class="fb" data-f="intercepted" onclick="fR('intercepted',this)">⊘<span class="fc" id="cI">0</span></button>

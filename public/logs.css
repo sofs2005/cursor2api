@@ -71,6 +71,12 @@ body {
   box-shadow: var(--shadow-sm);
 }
 .sc b { font-family: var(--mono); color: var(--t1); font-weight: 600 }
+.sc-ok { color: var(--green) }
+.sc-ok b { color: var(--green) }
+.sc-deg { color: var(--orange) }
+.sc-deg b { color: var(--orange) }
+.sc-err { color: var(--red) }
+.sc-err b { color: var(--red) }
 .hdr-r { display: flex; gap: 8px; align-items: center }
 .hdr-btn {
   padding: 5px 12px; font-size: 11px; font-weight: 500;
@@ -167,6 +173,7 @@ body {
 .ri .si-dot { position: absolute; right: 10px; top: 10px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.8) }
 .si-dot.processing { background: var(--yellow); animation: p 1s infinite }
 .si-dot.success { background: var(--green) }
+.si-dot.degraded { background: var(--orange) }
 .si-dot.error { background: var(--red) }
 .si-dot.intercepted { background: var(--pink) }
 .ri-title {
@@ -192,6 +199,7 @@ body {
 .bg.tls { background: #f3e8ff; color: var(--purple) }
 .bg.rtr { background: #fef3c7; color: var(--yellow) }
 .bg.cnt { background: #ffedd5; color: var(--orange) }
+.bg.dgd { background: #fff7ed; color: var(--orange) }
 .bg.err { background: #fef2f2; color: var(--red) }
 .bg.icp { background: #fdf2f8; color: var(--pink) }
 
@@ -480,6 +488,7 @@ body {
 [data-theme="dark"] .bg.tls { background: #2e1065; color: var(--purple) }
 [data-theme="dark"] .bg.rtr { background: #422006; color: var(--yellow) }
 [data-theme="dark"] .bg.cnt { background: #431407; color: var(--orange) }
+[data-theme="dark"] .bg.dgd { background: #3f1d0d; color: #fdba74 }
 [data-theme="dark"] .bg.err { background: #450a0a; color: var(--red) }
 [data-theme="dark"] .bg.icp { background: #500724; color: var(--pink) }
 [data-theme="dark"] .tb:hover { background: #164e63 }

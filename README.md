@@ -1,8 +1,8 @@
-# Cursor2API v2.7.6
+# Cursor2API v2.7.7
 
 将 Cursor 文档页免费 AI 对话接口代理转换为 **Anthropic Messages API** 和 **OpenAI Chat Completions API**，支持 **Claude Code** 和 **Cursor IDE** 使用。
 
-> ⚠️ **版本说明**：当前 v2.7.6 新增工具透传模式（passthrough）、工具禁用模式（disabled）、身份泄漏清洗增强和 `tool_choice=any` 引导优化。
+> ⚠️ **版本说明**：当前 v2.7.7 重点修复长 `Write/Edit` 截断续写、OpenAI 流式工具调用恢复，并新增 `degraded` 日志状态与降级原因展示，方便排查“看似成功、实际体验不佳”的请求。
 
 ## 原理
 
@@ -27,6 +27,7 @@
 - **OpenAI Chat Completions API 兼容** - `/v1/chat/completions`，对接 ChatBox / LobeChat 等客户端
 - **Cursor IDE Agent 模式适配** - `/v1/responses` 端点 + 扁平工具格式 + 增量流式工具调用
 - **🆕 全链路日志查看器** - Web UI 实时查看请求/响应/工具调用全流程，支持日/夜主题切换
+- **🆕 降级日志诊断** - `degraded` 状态会标记工具不可用假成功、`max_tokens` 未续写、模型自述“写到一半/补写中”等异常体验
 - **🆕 API Token 鉴权** - 公网部署安全，支持 Bearer token / x-api-key 双模式，多 token 管理
 - **🆕 Thinking 支持** - 客户端驱动，Anthropic `thinking` block + OpenAI `reasoning_content`，模型名含 `thinking` 或传 `reasoning_effort` 即启用
 - **🆕 response_format 支持** - `json_object` / `json_schema` 格式输出，自动剥离 markdown 包装
@@ -38,7 +39,7 @@
 - **全工具支持** - 无工具白名单限制，支持所有 MCP 工具和自定义扩展
 - **多层拒绝拦截** - 50+ 正则模式匹配拒绝文本（中英文），自动重试 + 认知重构绕过，支持自定义规则
 - **三层身份保护** - 身份探针拦截 + 拒绝重试 + 响应清洗（可配置开关），确保输出永远呈现 Claude 身份
-- **截断无缝续写** - Proxy 底层自动拼接被截断的工具响应（最多 6 次），含智能去重
+- **截断无缝续写** - Anthropic / OpenAI 兼容路径都会恢复被截断的长 `Write/Edit` 工具调用，含语义级截断检测与智能去重
 - **渐进式历史压缩** - 智能识别消息类型，工具调用摘要化、工具结果头尾保留，不破坏 JSON 结构
 - **🆕 可配置压缩系统** - 支持开关 + 3档级别（轻度/中等/激进）+ 自定义参数，环境变量可覆盖
 - **🆕 日志查看器鉴权** - 配置 auth_tokens 后 /logs 页面需登录，token 缓存到 localStorage
@@ -83,11 +84,13 @@ cp config.yaml.example config.yaml
 | `logging.persist_mode` | 日志落盘模式：`summary` 问答摘要 / `compact` 精简 / `full` 完整 | `summary` |
 | `logging.db_enabled` | SQLite 持久化（推荐，解决大文件 OOM） | `false` |
 | `logging.db_path` | SQLite 文件路径 | `./logs/cursor2api.db` |
-| `max_auto_continue` | 截断自动续写次数 (`0`=禁用，交由客户端续写) | `0` |
+| `max_auto_continue` | Anthropic 路径的截断自动续写次数（`0`=禁用，交由客户端续写；OpenAI 兼容长工具调用仍会保底做 1 次内部恢复） | `0` |
 | `max_history_messages` | 历史消息条数上限，超出时删除最早消息（建议改用 `max_history_tokens`） | `-1`（不限制） |
-| `max_history_tokens` | 历史消息 token 数上限（推荐），代码自动补偿 Cursor 后端开销（1,300 基础 + 工具 tokenizer 差异），参考值 `130000~170000` | `150000` |
+| `max_history_tokens` | 历史消息 token 数上限（推荐），代码自动补偿 Cursor 后端开销（1,300 基础 + 工具 tokenizer 差异），示例推荐值 `120000`，参考值 `110000~130000` | `120000` |
 | `sanitize_response` | 响应内容清洗开关（替换 Cursor 身份引用为 Claude） | `false` |
 | `refusal_patterns` | 自定义拒绝检测规则列表（追加到内置规则） | 不配置 |
+| `tools.schema_mode` | 工具 Schema 呈现模式，推荐 `compact` 以减少上下文占用 | `compact` |
+| `tools.description_max_length` | 工具描述截断长度，推荐 `100` 作为体积与理解效果的折中 | `100` |
 | `tools.passthrough` | 🆕 透传模式：跳过 few-shot 注入，原始 JSON 嵌入（Roo Code/Cline 推荐） | `false` |
 | `tools.disabled` | 🆕 禁用模式：完全不注入工具定义，极致省上下文 | `false` |
 
@@ -122,11 +125,15 @@ claude
 
 在 Cursor IDE 的设置中配置：
 ```
-OPENAI_BASE_URL=http://localhost:3010/v1
+OPENAI_BASE_URL=https://your-domain.example.com/v1
 ```
 模型选择 `claude-sonnet-4-20250514` 或其他列出的 Claude 模型名。
 
-> ⚠️ **注意**：Cursor IDE 请优先选用 Claude 模型名（通过 `/v1/models` 查看），避免使用 GPT 模型名以获得最佳兼容。
+> ⚠️ **注意 1**：Cursor IDE 这里通常需要 **Cursor Pro 会员** 才能正常使用自定义模型 / Base URL。
+>
+> ⚠️ **注意 2**：`OPENAI_BASE_URL` 需要填写 **公网可访问的域名地址**，建议使用 HTTPS 反向代理到你的 `cursor2api` 服务；直接填写 `http://localhost:3010/v1` 或局域网地址，通常无法在 Cursor IDE 中正常使用。
+>
+> ⚠️ **注意 3**：Cursor IDE 请优先选用 Claude 模型名（通过 `/v1/models` 查看），避免使用 GPT 模型名以获得最佳兼容。
 
 ## 🖥️ 日志查看器
 
@@ -137,8 +144,9 @@ OPENAI_BASE_URL=http://localhost:3010/v1
 - **实时日志流** - SSE 推送，实时查看请求处理的每个阶段
 - **请求列表** - 左侧面板展示所有请求，以用户提问作为标题，方便快速识别
 - **全局搜索** - 关键字搜索 + 时间过滤（今天/两天/一周/一月）
-- **状态过滤** - 按成功/失败/处理中/拦截状态筛选
+- **状态过滤** - 按成功/降级/失败/处理中/拦截状态筛选，快速定位“能返回但体验差”的请求
 - **详情面板** - 点击请求查看完整的请求参数、提示词、响应内容
+- **降级原因** - 对 `degraded` 请求显示具体原因，如工具未真正调用、截断后补写、`max_tokens` 未自动恢复
 - **阶段耗时** - 可视化时间线展示各阶段耗时（receive → convert → send → response → complete）
 - **🌙 日/夜主题** - 一键切换明暗主题，自动记忆偏好
 - **日志持久化** - `logging.db_enabled: true` 开启 SQLite（推荐，解决大文件 OOM，重启后历史可查）；或 `logging.file_enabled: true` 使用 JSONL 文件；两者可同时开启双写。`persist_mode` 控制落盘内容：`summary`（默认，仅问答摘要）/ `compact`（精简）/ `full`（完整）
@@ -254,9 +262,9 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 | `LOG_DIR` | 日志文件目录 |
 | `LOG_DB_ENABLED` | SQLite 持久化 (`true`/`false`)，推荐替代 JSONL |
 | `LOG_DB_PATH` | SQLite 文件路径 |
-| `MAX_AUTO_CONTINUE` | 截断自动续写次数 (`0`=禁用) |
+| `MAX_AUTO_CONTINUE` | Anthropic 路径的截断自动续写次数（`0`=禁用；OpenAI 兼容长工具调用仍会保底恢复 1 次） |
 | `MAX_HISTORY_MESSAGES` | 历史消息条数上限（`-1`=不限制） |
-| `MAX_HISTORY_TOKENS` | 历史消息 token 数上限（默认 `150000`，`-1`=不限制，参考值 `130000~170000`，代码自动补偿 Cursor 后端开销） |
+| `MAX_HISTORY_TOKENS` | 历史消息 token 数上限（程序内置默认 `150000`；`config.yaml.example` 推荐 `120000`；`-1`=不限制） |
 | `SANITIZE_RESPONSE` | 响应内容清洗开关 (`true`/`false`，默认 `false`) |
 | `TOOLS_PASSTHROUGH` | 🆕 工具透传模式 (`true`/`false`，默认 `false`) |
 | `TOOLS_DISABLED` | 🆕 工具禁用模式 (`true`/`false`，默认 `false`) |

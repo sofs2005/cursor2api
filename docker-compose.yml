@@ -32,14 +32,14 @@ services:
       # true=始终启用思考链, false=强制关闭
       # - THINKING_ENABLED=true
 
-      # ── 历史消息压缩 ──
-      # - COMPRESSION_ENABLED=false
-      # - COMPRESSION_LEVEL=1
+      # ── 历史消息压缩（推荐开启） ──
+      # - COMPRESSION_ENABLED=true
+      # - COMPRESSION_LEVEL=2
 
       # ── 自动续写 & 历史消息限制 ──
       # - MAX_AUTO_CONTINUE=0          # 截断后自动续写次数，0=禁用(默认)
       # - MAX_HISTORY_MESSAGES=-1      # 历史消息条数上限，-1=不限制（建议改用 MAX_HISTORY_TOKENS）
-      # - MAX_HISTORY_TOKENS=150000     # 历史消息 token 数上限（推荐），默认 150000，参考值 130000~170000（代码自动补偿 Cursor 后端开销）
+      # - MAX_HISTORY_TOKENS=120000    # 示例推荐值；程序内置默认仍为 150000，更保守以减少长输出/长工具参数截断
 
       # ── 日志持久化（⚠️ 修改后需重启容器生效） ──
       # 方式一：JSONL 文件（日志量小时使用）
@@ -56,12 +56,19 @@ services:
       # 默认使用本地 OCR（零配置），如需外部 Vision API 请在 config.yaml 中修改 vision.mode 为 'api'
       # 并配置 vision.base_url / vision.api_key / vision.model
 
-      # ── 工具透传模式（推荐 Roo Code / Cline 等非 Claude Code 客户端） ──
-      # 开启后跳过 few-shot 注入，直接嵌入工具定义，减少身份冲突
+      # ── 工具模式推荐（Claude Code / Cursor Agent） ──
+      # 推荐在 config.yaml 中保持：
+      #   tools.schema_mode: compact
+      #   tools.description_max_length: 100
+      #   tools.passthrough: false
+      #   tools.disabled: false
+      #
+      # Roo Code / Cline 等非 Claude Code 客户端如遇到工具识别冲突，再考虑启用透传模式：
       # - TOOLS_PASSTHROUGH=true
 
       # ── 工具禁用模式（极致省上下文） ──
       # 完全不注入工具定义和 few-shot，模型凭训练记忆调用工具
+      # 仅在极端省上下文场景下再启用，日常推荐保持 false（由 config.yaml 管理）
       # - TOOLS_DISABLED=true
 
       # ── 响应内容清洗 ──

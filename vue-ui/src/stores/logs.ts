@@ -13,10 +13,10 @@ export const useLogsStore = defineStore('logs', () => {
   const hasMore = ref(false);
   const loadingMore = ref(false);
   const total = ref(0);
-  const statusCounts = ref<Record<string, number>>({ all: 0, success: 0, error: 0, processing: 0, intercepted: 0 });
+  const statusCounts = ref<Record<string, number>>({ all: 0, success: 0, degraded: 0, error: 0, processing: 0, intercepted: 0 });
 
   const search = ref('');
-  const statusFilter = ref<'all' | 'success' | 'error' | 'processing' | 'intercepted'>('all');
+  const statusFilter = ref<'all' | 'success' | 'degraded' | 'error' | 'processing' | 'intercepted'>('all');
   const timeFilter = ref<'all' | 'today' | '2d' | '7d' | '30d'>('all');
 
   function getTimeCutoff(): number {

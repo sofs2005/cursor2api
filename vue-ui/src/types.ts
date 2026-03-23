@@ -37,12 +37,14 @@ export interface RequestSummary {
   hasTools: boolean;
   toolCount: number;
   messageCount: number;
-  status: 'processing' | 'success' | 'error' | 'intercepted';
+  status: 'processing' | 'success' | 'degraded' | 'error' | 'intercepted';
   responseChars: number;
   retryCount: number;
   continuationCount: number;
   stopReason?: string;
   error?: string;
+  statusReason?: string;
+  issueTags?: string[];
   toolCallsDetected: number;
   ttft?: number;
   cursorApiTime?: number;
@@ -57,6 +59,7 @@ export interface RequestSummary {
 export interface Stats {
   totalRequests: number;
   successCount: number;
+  degradedCount: number;
   errorCount: number;
   avgResponseTime: number;
   avgTTFT: number;

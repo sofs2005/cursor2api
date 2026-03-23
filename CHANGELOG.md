@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.7.7 (2026-03-23)
+
+### 🩺 降级日志与可观测性增强
+
+- **新增 `degraded` 状态**：将“工具看起来可用但未真正调用”、“`max_tokens` 截断且未自动续写”、“模型自述上一步输出被截断、正在补写”等情况从 `success` 中拆分出来
+- **补充 `statusReason` / `issueTags`**：日志落盘、统计接口、Vue 日志页和旧版 `/logs` 页面均可显示降级原因并单独筛选
+- **修复 Anthropic 工具统计失真**：`/v1/messages` 路径会正确写入 `toolCallsDetected`，不再出现 `stop_reason=tool_use` 但统计为 0 的情况
+
+### ✂️ 长 Write/Edit 截断恢复修复
+
+- **新增语义级截断检测**：即使 `json action` 代码块本身已经闭合，只要大负载 `Write/Edit` 参数尾部明显半截，也会继续判定为需要续写
+- **OpenAI 流式长工具调用恢复**：OpenAI 兼容流式路径现在至少会尝试 1 次内部续写，修复长 `Write` 被截断后无法恢复完整多帧 `tool_calls` 的回归
+- **补充回归测试**：新增并整理 `unit-handler-truncation.mjs` 与 `unit-openai-stream-truncation.mjs`，覆盖长 `Write/Edit` 截断、自愈补写和 OpenAI 流式恢复场景
+
+---
+
 ## v2.7.5 (2026-03-19)
 
 ### 🏗️ 常量集中管理
