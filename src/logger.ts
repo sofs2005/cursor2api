@@ -1,4 +1,4 @@
-/**
+﻿/**
  * logger.ts - 全链路日志系统 v4
  *
  * 核心升级：
@@ -103,12 +103,14 @@ export interface RequestSummary {
     hasTools: boolean;
     toolCount: number;
     messageCount: number;
-    status: 'processing' | 'success' | 'error' | 'intercepted';
+    status: 'processing' | 'success' | 'degraded' | 'error' | 'intercepted';
     responseChars: number;
     retryCount: number;
     continuationCount: number;
     stopReason?: string;
     error?: string;
+    statusReason?: string;
+    issueTags?: string[];
     toolCallsDetected: number;
     ttft?: number;
     cursorApiTime?: number;
@@ -119,6 +121,12 @@ export interface RequestSummary {
     outputTokens?: number;  // 响应完成后的估算输出 token 数（js-tiktoken）
     /** 用户提问标题（截取最后一个 user 消息的前 80 字符） */
     title?: string;
+}
+
+interface CompletionAssessment {
+    status: RequestSummary['status'];
+    statusReason?: string;
+    issueTags?: string[];
 }
 
 // ==================== 存储 ====================
@@ -316,6 +324,72 @@ function buildSummaryPayload(summary: RequestSummary, payload: RequestPayload): 
         answerType: answerText ? 'text' : toolCallNames.length > 0 ? 'tool_calls' : 'empty',
         ...(toolCallNames.length > 0 ? { toolCallNames } : {}),
     };
+}
+
+const TOOL_UNAVAILABLE_PATTERNS: RegExp[] = [
+    /read-only documentation tools/i,
+    /documentation read tools/i,
+    /only documentation.*tools/i,
+    /\bi don't have (?:a |the )?(?:write|edit|bash)\b/i,
+    /\bi (?:can't|cannot) (?:create|write|save|edit|modify) files? directly\b/i,
+    /\bsave (?:this|it).+manually\b/i,
+    /只(?:有|能用).*(?:文档|只读).*(?:工具|tool)/,
+    /没有.*(?:Write|Bash|Edit).*工具/i,
+    /无法直接(?:创建|写入|保存|修改|编辑)文件/,
+];
+
+const SELF_REPAIR_AFTER_CUTOFF_PATTERNS: RegExp[] = [
+    /\b(?:file|response|output).{0,40}(?:got )?cut (?:off|short)\b/i,
+    /\bgot cut at line \d+\b/i,
+    /\bread what was written and complete it\b/i,
+    /\bappend the remaining (?:content|sections)\b/i,
+    /\bcomplete the remaining\b/i,
+    /文件.*(?:被截断|写到一半|没写完|写残)/,
+    /(?:补上|追加)剩余(?:内容|部分|章节)/,
+    /继续补全/,
+];
+
+function assessCompletionOutcome(summary: RequestSummary, payload: RequestPayload, stopReason?: string): CompletionAssessment {
+    const finalText = [payload.finalResponse, payload.rawResponse]
+        .find((text): text is string => typeof text === 'string' && text.trim().length > 0)
+        ?.trim() || '';
+
+    const issueTags: string[] = [];
+    const reasonParts: string[] = [];
+
+    const missingToolExecution = summary.hasTools
+        && summary.toolCallsDetected === 0
+        && finalText.length > 0
+        && TOOL_UNAVAILABLE_PATTERNS.some(pattern => pattern.test(finalText));
+
+    if (missingToolExecution) {
+        issueTags.push('tool_unavailable');
+        reasonParts.push('模型声称工具不可用，未执行实际工具调用');
+    }
+
+    const truncatedWithoutRecovery = stopReason === 'max_tokens' && summary.continuationCount === 0;
+    if (truncatedWithoutRecovery) {
+        issueTags.push('truncated_output');
+        reasonParts.push('响应触发 max_tokens 且未自动续写');
+    }
+
+    const selfRepairAfterCutoff = summary.hasTools
+        && finalText.length > 0
+        && SELF_REPAIR_AFTER_CUTOFF_PATTERNS.some(pattern => pattern.test(finalText));
+    if (selfRepairAfterCutoff) {
+        issueTags.push('self_repair_after_cutoff');
+        reasonParts.push('模型自述上一步输出或写入被截断，当前请求在补救补写');
+    }
+
+    if (issueTags.length > 0) {
+        return {
+            status: 'degraded',
+            statusReason: reasonParts.join('；'),
+            issueTags,
+        };
+    }
+
+    return { status: 'success' };
 }
 
 function buildCompactOriginalRequest(summary: RequestSummary, payload: RequestPayload): Record<string, unknown> | undefined {
@@ -610,10 +684,11 @@ export function clearAllLogs(): { cleared: number } {
 // ==================== 统计 ====================
 
 export function getStats() {
-    let success = 0, error = 0, intercepted = 0, processing = 0;
+    let success = 0, degraded = 0, error = 0, intercepted = 0, processing = 0;
     let totalTime = 0, timeCount = 0, totalTTFT = 0, ttftCount = 0;
     for (const s of requestSummaries.values()) {
         if (s.status === 'success') success++;
+        else if (s.status === 'degraded') degraded++;
         else if (s.status === 'error') error++;
         else if (s.status === 'intercepted') intercepted++;
         else if (s.status === 'processing') processing++;
@@ -622,7 +697,7 @@ export function getStats() {
     }
     return {
         totalRequests: requestSummaries.size,
-        successCount: success, errorCount: error,
+        successCount: success, degradedCount: degraded, errorCount: error,
         interceptedCount: intercepted, processingCount: processing,
         avgResponseTime: timeCount > 0 ? Math.round(totalTime / timeCount) : 0,
         avgTTFT: ttftCount > 0 ? Math.round(totalTTFT / ttftCount) : 0,
@@ -760,7 +835,7 @@ export function getRequestSummariesPage(opts: {
             );
         });
     }
-    const statusCounts: Record<string, number> = { all: allUnfiltered.length, success: 0, error: 0, processing: 0, intercepted: 0 };
+    const statusCounts: Record<string, number> = { all: allUnfiltered.length, success: 0, degraded: 0, error: 0, processing: 0, intercepted: 0 };
     for (const id of allUnfiltered) {
         const s = requestSummaries.get(id);
         if (s?.status) statusCounts[s.status] = (statusCounts[s.status] ?? 0) + 1;
@@ -1019,11 +1094,17 @@ export class RequestLogger {
     complete(responseChars: number, stopReason?: string): void {
         this.endPhase();
         const duration = Date.now() - this.summary.startTime;
+        const assessment = assessCompletionOutcome(this.summary, this.payload, stopReason);
         this.summary.endTime = Date.now();
-        this.summary.status = 'success';
+        this.summary.status = assessment.status;
+        this.summary.statusReason = assessment.statusReason;
+        this.summary.issueTags = assessment.issueTags;
         this.summary.responseChars = responseChars;
         this.summary.stopReason = stopReason;
-        this.log('info', 'System', 'complete', `完成 (${duration}ms, ${responseChars} chars, stop=${stopReason})`);
+        const completionMessage = assessment.status === 'degraded'
+            ? `降级完成 (${duration}ms, ${responseChars} chars, stop=${stopReason})${assessment.statusReason ? ` - ${assessment.statusReason}` : ''}`
+            : `完成 (${duration}ms, ${responseChars} chars, stop=${stopReason})`;
+        this.log(assessment.status === 'degraded' ? 'warn' : 'info', 'System', 'complete', completionMessage);
         logEmitter.emit('summary', this.summary);
         
         // ★ 持久化到文件
@@ -1033,7 +1114,10 @@ export class RequestLogger {
         const contInfo = this.summary.continuationCount > 0 ? ` cont=${this.summary.continuationCount}` : '';
         const toolInfo = this.summary.toolCallsDetected > 0 ? ` tools_called=${this.summary.toolCallsDetected}` : '';
         const ttftInfo = this.summary.ttft ? ` ttft=${this.summary.ttft}ms` : '';
-        console.log(`\x1b[32m⟵\x1b[0m [${this.requestId}] ${duration}ms | ${responseChars} chars | stop=${stopReason || 'end_turn'}${ttftInfo}${retryInfo}${contInfo}${toolInfo}`);
+        const statusColor = assessment.status === 'degraded' ? '\x1b[33m' : '\x1b[32m';
+        const statusLabel = assessment.status === 'degraded' ? 'DEGRADED' : 'OK';
+        const reasonInfo = assessment.statusReason ? ` | reason=${assessment.statusReason}` : '';
+        console.log(`${statusColor}${statusLabel}\x1b[0m [${this.requestId}] ${duration}ms | ${responseChars} chars | stop=${stopReason || 'end_turn'}${ttftInfo}${retryInfo}${contInfo}${toolInfo}${reasonInfo}`);
     }
     
     intercepted(reason: string): void {

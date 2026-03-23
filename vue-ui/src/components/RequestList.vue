@@ -69,6 +69,7 @@
           <span v-if="req.retryCount > 0" class="bg bg-retry">R:{{ req.retryCount }}</span>
           <span v-if="req.continuationCount > 0" class="bg bg-cont">+{{ req.continuationCount }}</span>
           <span v-if="req.thinkingChars > 0" class="bg bg-think">🤔 {{ fmtN(req.thinkingChars) }} chars</span>
+          <span v-if="req.status === 'degraded'" class="bg bg-deg">DEGRADED</span>
           <span v-if="req.status === 'error'" class="bg bg-err">ERR</span>
           <span v-if="req.status === 'intercepted'" class="bg bg-int">INTERCEPT</span>
         </div>
@@ -135,6 +136,7 @@ const timeTabs = [
 const statusTabs = [
   { value: 'all' as const,         label: '全部' },
   { value: 'success' as const,     label: '成功' },
+  { value: 'degraded' as const,    label: '降级' },
   { value: 'error' as const,       label: '错误' },
   { value: 'processing' as const,  label: '处理中' },
   { value: 'intercepted' as const, label: '中断' },
@@ -271,6 +273,7 @@ function selectReq(id: string) {
   background: var(--text-muted);
 }
 .st.success { background: var(--green); }
+.st.degraded { background: var(--orange); }
 .st.error { background: var(--red); }
 .st.processing { background: var(--yellow); animation: pulse 1s infinite; }
 .st.intercepted { background: var(--pink); }
@@ -322,6 +325,7 @@ function selectReq(id: string) {
 .bg-retry { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); }
 .bg-cont { background: color-mix(in srgb, var(--purple) 15%, transparent); color: var(--purple); }
 .bg-think { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--text-muted); }
+.bg-deg { background: color-mix(in srgb, var(--orange) 15%, transparent); color: var(--orange); }
 .bg-err { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
 .bg-int { background: color-mix(in srgb, var(--pink) 15%, transparent); color: var(--pink); }
 

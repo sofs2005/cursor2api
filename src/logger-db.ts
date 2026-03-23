@@ -138,7 +138,7 @@ export function dbGetStatusCounts(opts: { keyword?: string; since?: number } = {
     const { where, params } = buildWhere(opts); // 不传 status，只用 keyword/since
     const sql = `SELECT json_extract(summary_json,'$.status') as status, COUNT(*) as cnt FROM requests ${where} GROUP BY status`;
     const rows = getDb().prepare(sql).all(params) as Array<{ status: string; cnt: number }>;
-    const counts: Record<string, number> = { all: 0, success: 0, error: 0, processing: 0, intercepted: 0 };
+    const counts: Record<string, number> = { all: 0, success: 0, degraded: 0, error: 0, processing: 0, intercepted: 0 };
     for (const row of rows) {
         if (row.status) counts[row.status] = row.cnt;
         counts.all += row.cnt;

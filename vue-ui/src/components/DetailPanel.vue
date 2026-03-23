@@ -27,6 +27,7 @@
           <span v-if="curReq.toolCallsDetected > 0" class="sbadge sm-badge"><span class="sm-l">工具调用</span><b>{{ curReq.toolCallsDetected }}</b>次</span>
           <span v-if="curReq.thinkingChars > 0" class="sbadge sm-badge"><span class="sm-l">Thinking</span><b>{{ fmtN(curReq.thinkingChars) }}</b>chars</span>
           <span v-if="curReq.stopReason" class="sbadge sm-badge"><span class="sm-l">停止原因</span><b>{{ curReq.stopReason }}</b></span>
+          <span v-if="curReq.statusReason" class="sbadge sm-badge sm-deg"><span class="sm-l">降级原因</span><b>{{ curReq.statusReason }}</b></span>
           <span v-if="curReq.error" class="sbadge sm-badge sm-err"><span class="sm-l">错误</span><b>{{ curReq.error }}</b></span>
         </div>
       </div>
@@ -94,7 +95,7 @@ const seqNum = computed(() => {
 
 function statusLabel(status?: string): string {
   const map: Record<string, string> = {
-    success: '成功', error: '错误', processing: '处理中', intercepted: '已拦截',
+    success: '成功', degraded: '降级', error: '错误', processing: '处理中', intercepted: '已拦截',
   };
   return status ? (map[status] ?? status) : '';
 }
@@ -161,6 +162,7 @@ function fmtMs(ms: number): string {
 .sbadge b { font-family: var(--mono); font-weight: 700; }
 /* 状态颜色 */
 .sbadge.s-success { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); border-color: color-mix(in srgb, var(--green) 25%, transparent); }
+.sbadge.s-degraded { background: color-mix(in srgb, var(--orange) 15%, transparent); color: var(--orange); border-color: color-mix(in srgb, var(--orange) 25%, transparent); }
 .sbadge.s-error { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
 .sbadge.s-processing { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 25%, transparent); }
 .sbadge.s-intercepted { background: color-mix(in srgb, #c084fc 15%, transparent); color: #c084fc; border-color: color-mix(in srgb, #c084fc 25%, transparent); }
@@ -180,6 +182,8 @@ function fmtMs(ms: number): string {
 .fmt-responses { color: var(--cyan) !important; }
 .sm-err { border-color: color-mix(in srgb, var(--red) 30%, transparent); }
 .sm-err b { color: var(--red) !important; }
+.sm-deg { border-color: color-mix(in srgb, var(--orange) 30%, transparent); }
+.sm-deg b { color: var(--orange) !important; }
 
 .tabs-row {
   display: flex; align-items: center;

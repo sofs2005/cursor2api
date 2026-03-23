@@ -7,6 +7,7 @@
       <div class="stats-pills">
         <div class="sc"><b>{{ stats.totalRequests }}</b> 请求</div>
         <div class="sc sc-ok">✓<b>{{ stats.successCount }}</b></div>
+        <div class="sc sc-deg">!<b>{{ stats.degradedCount }}</b></div>
         <div class="sc sc-err">✗<b>{{ stats.errorCount }}</b></div>
         <div class="sc" v-if="stats.avgResponseTime"><b>{{ fmtMs(stats.avgResponseTime) }}</b> 均耗</div>
         <div class="sc" v-if="stats.avgTTFT">⚡<b>{{ fmtMs(stats.avgTTFT) }}</b> TTFT</div>
@@ -131,6 +132,8 @@ h1 .ic { font-size: 17px; -webkit-text-fill-color: initial; }
 .sc b { font-family: var(--mono); color: var(--text); font-weight: 600; margin: 0 1px; }
 .sc-ok { color: var(--green); }
 .sc-ok b { color: var(--green); }
+.sc-deg { color: var(--orange); }
+.sc-deg b { color: var(--orange); }
 .sc-err { color: var(--red); }
 .sc-err b { color: var(--red); }
 .header-right { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }

@@ -1,23 +1,8 @@
-import { autoContinueCursorToolResponseStream } from '../dist/handler.js';
+﻿import { autoContinueCursorToolResponseStream } from '../dist/handler.js';
 import { parseToolCalls } from '../dist/converter.js';
 
 let passed = 0;
 let failed = 0;
-
-function test(name, fn) {
-    Promise.resolve()
-        .then(fn)
-        .then(() => {
-            console.log(`  ✅ ${name}`);
-            passed++;
-        })
-        .catch((error) => {
-            const message = error instanceof Error ? error.message : String(error);
-            console.error(`  ❌ ${name}`);
-            console.error(`      ${message}`);
-            failed++;
-        });
-}
 
 function assert(condition, message) {
     if (!condition) throw new Error(message || 'Assertion failed');
@@ -63,18 +48,28 @@ function createSseResponse(deltas) {
     });
 }
 
-const pending = [];
+async function runTest(name, fn) {
+    try {
+        await fn();
+        console.log(`  OK ${name}`);
+        passed++;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`  FAIL ${name}`);
+        console.error(`      ${message}`);
+        failed++;
+    }
+}
 
-console.log('\n📦 OpenAI 流式截断回归\n');
+console.log('\nOpenAI stream truncation regression\n');
 
-pending.push((async () => {
+await runTest('long Write triggers continuation and restores multi-frame tool_calls', async () => {
     const originalFetch = global.fetch;
     const fetchCalls = [];
 
     try {
         global.fetch = async (url, init) => {
             fetchCalls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
-
             return createSseResponse([
                 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
                 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
@@ -85,7 +80,7 @@ pending.push((async () => {
         };
 
         const initialResponse = [
-            '准备写入文件。',
+            'Preparing file write.',
             '',
             '```json action',
             '{',
@@ -98,15 +93,15 @@ pending.push((async () => {
         const fullResponse = await autoContinueCursorToolResponseStream(buildCursorReq(), initialResponse, true);
         const parsed = parseToolCalls(fullResponse);
 
-        assertEqual(fetchCalls.length, 1, '长 Write 截断应触发一次续写请求');
-        assertEqual(parsed.toolCalls.length, 1, '续写后应恢复出一个工具调用');
+        assertEqual(fetchCalls.length, 1, 'long Write truncation should trigger one continuation request');
+        assertEqual(parsed.toolCalls.length, 1, 'continuation should restore one tool call');
         assertEqual(parsed.toolCalls[0].name, 'Write');
-        assert(typeof fetchCalls[0].body?.messages?.at(-1)?.parts?.[0]?.text === 'string', '续写请求应包含 user 引导消息');
-        assert(fetchCalls[0].body.messages.at(-1).parts[0].text.includes('Continue EXACTLY from where you stopped'), '续写提示词应正确注入');
+        assert(typeof fetchCalls[0].body?.messages?.at(-1)?.parts?.[0]?.text === 'string', 'continuation request should include a user guidance message');
+        assert(fetchCalls[0].body.messages.at(-1).parts[0].text.includes('Continue EXACTLY from where you stopped'), 'continuation prompt should be injected');
 
         const content = String(parsed.toolCalls[0].arguments.content || '');
-        assert(content.startsWith('AAAA'), '应保留原始截断前缀');
-        assert(content.includes('BBBB'), '应拼接续写补全内容');
+        assert(content.startsWith('AAAA'), 'should preserve original prefix before truncation');
+        assert(content.includes('BBBB'), 'should append continuation content');
 
         const argsStr = JSON.stringify(parsed.toolCalls[0].arguments);
         const CHUNK_SIZE = 128;
@@ -114,29 +109,21 @@ pending.push((async () => {
         for (let j = 0; j < argsStr.length; j += CHUNK_SIZE) {
             chunks.push(argsStr.slice(j, j + CHUNK_SIZE));
         }
-        assert(chunks.length > 1, '长 Write 参数在 OpenAI 流式中应拆成多帧 tool_calls');
-        assertEqual(chunks.join(''), argsStr, '分块后重新拼接应等于原始 arguments');
-
-        console.log('  ✅ 长 Write 截断后续写并恢复为多帧 tool_calls');
-        passed++;
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error('  ❌ 长 Write 截断后续写并恢复为多帧 tool_calls');
-        console.error(`      ${message}`);
-        failed++;
+        assert(chunks.length > 1, 'long Write arguments should split into multiple tool_call frames in OpenAI stream mode');
+        assertEqual(chunks.join(''), argsStr, 'rejoined chunks should equal original arguments');
     } finally {
         global.fetch = originalFetch;
     }
-})());
+});
 
-pending.push((async () => {
+await runTest('short Read does not trigger continuation in OpenAI stream mode', async () => {
     const originalFetch = global.fetch;
     let fetchCount = 0;
 
     try {
         global.fetch = async () => {
             fetchCount++;
-            throw new Error('短参数工具不应触发续写请求');
+            throw new Error('short-argument tools should not trigger continuation');
         };
 
         const initialResponse = [
@@ -151,24 +138,14 @@ pending.push((async () => {
         const fullResponse = await autoContinueCursorToolResponseStream(buildCursorReq(), initialResponse, true);
         const parsed = parseToolCalls(fullResponse);
 
-        assertEqual(fetchCount, 0, '短参数 Read 不应进入续写');
-        assertEqual(parsed.toolCalls.length, 1, '即使未闭合也应直接恢复短参数工具');
+        assertEqual(fetchCount, 0, 'short Read should not enter continuation');
+        assertEqual(parsed.toolCalls.length, 1, 'short-argument tools should still be recovered directly');
         assertEqual(parsed.toolCalls[0].name, 'Read');
-
-        console.log('  ✅ 短参数 Read 不会在 OpenAI 流式路径中误续写');
-        passed++;
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error('  ❌ 短参数 Read 不会在 OpenAI 流式路径中误续写');
-        console.error(`      ${message}`);
-        failed++;
     } finally {
         global.fetch = originalFetch;
     }
-})());
+});
 
-await Promise.all(pending);
-
-console.log(`\n结果: ${passed} 通过 / ${failed} 失败 / ${passed + failed} 总计\n`);
+console.log(`\nresult: ${passed} passed / ${failed} failed / ${passed + failed} total\n`);
 
 if (failed > 0) process.exit(1);

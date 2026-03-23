@@ -62,7 +62,8 @@ max_history_messages: -1
 #   - 剩余额度从最新消息往前累加，超出预算的最早消息整条删除
 #   - 工具模式的 few-shot 示例（前 2 条）始终保留
 #
-# 参考值：130000～170000，默认 150000
+# 参考值：110000～130000，示例推荐 120000
+# 程序内置默认值仍为 150000；此示例采用更保守的 120000，给长回答/长工具参数预留更多输出空间
 # Cursor API 上下文上限约 200k tokens，建议 max_history_tokens + 开销 + 预留输出 ≤ 200000
 #
 # 与 max_history_messages 的关系：
@@ -70,8 +71,8 @@ max_history_messages: -1
 #   推荐：只设置 max_history_tokens，不设置 max_history_messages
 #
 # 设为 -1 不限制
-# 环境变量: MAX_HISTORY_TOKENS=150000
-max_history_tokens: 150000
+# 环境变量: MAX_HISTORY_TOKENS=120000
+max_history_tokens: 120000
 
 # ==================== Thinking 开关（最高优先级） ====================
 # 控制是否向 Cursor 发送 thinking 请求，优先级高于客户端传入的 thinking 参数
@@ -88,40 +89,40 @@ thinking:
 compression:
   # 是否启用压缩（true/false），关闭后所有消息原样保留
   # 环境变量: COMPRESSION_ENABLED=true|false
-  enabled: false
+  enabled: true
 
-  # 压缩级别: 1=轻度(默认), 2=中等, 3=激进
+  # 压缩级别: 1=轻度, 2=中等(推荐), 3=激进
   # 环境变量: COMPRESSION_LEVEL=1|2|3
   # 级别说明:
-  #   1（轻度）: 保留最近 10 条消息，早期消息保留 4000 字符，适合日常使用（默认）
-  #   2（中等）: 保留最近 6 条消息，早期消息保留 2000 字符，适合中长对话
+  #   1（轻度）: 保留最近 10 条消息，早期消息保留 4000 字符，适合短对话
+  #   2（中等）: 保留最近 6 条消息，早期消息保留 2000 字符，推荐日常使用
   #   3（激进）: 保留最近 4 条消息，早期消息保留 1000 字符，适合超长对话/大工具集
-  level: 1
+  level: 2
 
   # 以下为高级选项，设置后会覆盖 level 的预设值
   # 保留最近 N 条消息不压缩（数字越大保留越多上下文）
-  # keep_recent: 10
+  # keep_recent: 6
 
   # 早期消息最大字符数（超过此长度的消息会被智能压缩）
-  # early_msg_max_chars: 4000
+  # early_msg_max_chars: 2000
 
 # ==================== 工具处理配置 ====================
 # 控制工具定义如何传递给模型，影响上下文体积和工具调用准确性
 tools:
   # Schema 呈现模式
-  #   'compact': TypeScript 风格的紧凑签名，体积最小（~15K chars/90工具）
+  #   'compact': [推荐] TypeScript 风格的紧凑签名，体积最小（~15K chars/90工具）
   #              示例: {file_path!: string, encoding?: utf-8|base64}
-  #   'full':    [默认] 完整 JSON Schema，工具调用最精确
+  #   'full':    程序内置默认值，完整 JSON Schema，工具调用最精确
   #              适合工具少（<20个）或需要最高准确率的场景
   #   'names_only': 只输出工具名和描述，不输出参数Schema
   #              极致省 token，适合模型已经"学过"这些工具的场景（如 Claude Code 内置工具）
-  schema_mode: 'full'
+  schema_mode: 'compact'
 
   # 工具描述截断长度
-  #   0:  [默认] 不截断，保留完整描述，工具理解最准确
-  #   50: 截断到 50 个字符，节省上下文（适合工具多的场景）
-  #   200: 中等截断，保留大部分有用信息
-  description_max_length: 0
+  #   100: [推荐] 工具多、上下文容易挤满时的折中值
+  #   0:   程序内置默认值，不截断，保留完整描述（适合工具少的场景）
+  #   200: 保留更多描述信息，适合参数复杂的工具集
+  description_max_length: 100
 
   # 工具白名单 — 只保留指定名称的工具（不配则保留所有工具）
   # 💡 适合只用核心工具、排除大量不需要的 MCP 工具等场景
@@ -145,7 +146,7 @@ tools:
   #   false: [默认] 使用标准模式（buildToolInstructions + 多类别 few-shot 注入）
   #          Claude Code 推荐此模式，兼容性和工具调用覆盖率更好
   # 环境变量: TOOLS_PASSTHROUGH=true|false
-  # passthrough: true
+  passthrough: false
 
   # ★ 禁用模式（极致省上下文）
   #   true:  完全不注入工具定义和 few-shot 示例，节省大量上下文空间
@@ -153,7 +154,7 @@ tools:
   #          响应中的 ```json action``` 块仍会被正常解析
   #   false: [默认] 正常注入工具定义
   # 环境变量: TOOLS_DISABLED=true|false
-  # disabled: true
+  disabled: false
 
 # ==================== 响应内容清洗（可选，默认关闭） ====================
 # 开启后，会将响应中 Cursor 相关的身份引用替换为 Claude

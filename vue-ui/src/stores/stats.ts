@@ -7,6 +7,7 @@ export const useStatsStore = defineStore('stats', () => {
   const stats = ref<Stats>({
     totalRequests: 0,
     successCount: 0,
+    degradedCount: 0,
     errorCount: 0,
     avgResponseTime: 0,
     avgTTFT: 0,
