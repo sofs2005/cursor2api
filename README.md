@@ -77,10 +77,12 @@ cp config.yaml.example config.yaml
 | `vision.enabled` | 开启视觉拦截 | `true` |
 | `vision.mode` | 视觉模式：`ocr` / `api` | `ocr` |
 | `vision.proxy` | Vision 独立代理 | 不配置 |
-| `logging.file_enabled` | 日志文件持久化 | `false` |
+| `logging.file_enabled` | JSONL 文件持久化 | `false` |
 | `logging.dir` | 日志存储目录 | `./logs` |
 | `logging.max_days` | 日志保留天数 | `7` |
 | `logging.persist_mode` | 日志落盘模式：`summary` 问答摘要 / `compact` 精简 / `full` 完整 | `summary` |
+| `logging.db_enabled` | SQLite 持久化（推荐，解决大文件 OOM） | `false` |
+| `logging.db_path` | SQLite 文件路径 | `./logs/cursor2api.db` |
 | `max_auto_continue` | 截断自动续写次数 (`0`=禁用，交由客户端续写) | `0` |
 | `max_history_messages` | 历史消息条数上限，超出时删除最早消息（建议改用 `max_history_tokens`） | `-1`（不限制） |
 | `max_history_tokens` | 历史消息 token 数上限（推荐），代码自动补偿 Cursor 后端开销（1,300 基础 + 工具 tokenizer 差异），参考值 `130000~170000` | `150000` |
@@ -139,9 +141,7 @@ OPENAI_BASE_URL=http://localhost:3010/v1
 - **详情面板** - 点击请求查看完整的请求参数、提示词、响应内容
 - **阶段耗时** - 可视化时间线展示各阶段耗时（receive → convert → send → response → complete）
 - **🌙 日/夜主题** - 一键切换明暗主题，自动记忆偏好
-- **日志持久化** - 配置 `logging.file_enabled: true` 后日志写入 JSONL 文件，重启自动加载
-- **摘要落盘（默认）** - `logging.persist_mode: summary` 仅保留“用户问题 + 模型回答”与少量元数据，体积最小
-- **精简落盘** - `logging.persist_mode: compact` 保留更多排障字段，同时压缩磁盘 JSONL
+- **日志持久化** - `logging.db_enabled: true` 开启 SQLite（推荐，解决大文件 OOM，重启后历史可查）；或 `logging.file_enabled: true` 使用 JSONL 文件；两者可同时开启双写。`persist_mode` 控制落盘内容：`summary`（默认，仅问答摘要）/ `compact`（精简）/ `full`（完整）
 
 ### 鉴权
 
@@ -243,8 +243,6 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 
 | 环境变量 | 说明 |
 |----------|------|
-> ⚠️ **环境变量优先级高于 `config.yaml`**：若在 docker-compose 等环境中设置了环境变量，该参数的 `config.yaml` 配置会被覆盖，热重载对其**无效**。需要通过 `config.yaml` 动态调整的参数，请勿同时在环境变量中设置。
-
 | `PORT` | 服务端口 |
 | `AUTH_TOKEN` | API 鉴权 token（逗号分隔多个） |
 | `PROXY` | 全局代理地址 |
@@ -252,14 +250,18 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 | `THINKING_ENABLED` | Thinking 开关 (`true`/`false`) |
 | `COMPRESSION_ENABLED` | 压缩开关 (`true`/`false`) |
 | `COMPRESSION_LEVEL` | 压缩级别 (`1`/`2`/`3`) |
-| `LOG_FILE_ENABLED` | 日志文件持久化 (`true`/`false`) |
+| `LOG_FILE_ENABLED` | JSONL 文件持久化 (`true`/`false`) |
 | `LOG_DIR` | 日志文件目录 |
+| `LOG_DB_ENABLED` | SQLite 持久化 (`true`/`false`)，推荐替代 JSONL |
+| `LOG_DB_PATH` | SQLite 文件路径 |
 | `MAX_AUTO_CONTINUE` | 截断自动续写次数 (`0`=禁用) |
 | `MAX_HISTORY_MESSAGES` | 历史消息条数上限（`-1`=不限制） |
 | `MAX_HISTORY_TOKENS` | 历史消息 token 数上限（默认 `150000`，`-1`=不限制，参考值 `130000~170000`，代码自动补偿 Cursor 后端开销） |
 | `SANITIZE_RESPONSE` | 响应内容清洗开关 (`true`/`false`，默认 `false`) |
 | `TOOLS_PASSTHROUGH` | 🆕 工具透传模式 (`true`/`false`，默认 `false`) |
 | `TOOLS_DISABLED` | 🆕 工具禁用模式 (`true`/`false`，默认 `false`) |
+
+> ⚠️ **环境变量优先级高于 `config.yaml`**：若在 docker-compose 等环境中设置了环境变量，该参数的 `config.yaml` 配置会被覆盖，热重载对其**无效**。需要通过 `config.yaml` 动态调整的参数，请勿同时在环境变量中设置。
 
 ## 免责声明 / Disclaimer
 
