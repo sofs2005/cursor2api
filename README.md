@@ -138,6 +138,56 @@ OPENAI_BASE_URL=https://your-domain.example.com/v1
 >
 > ⚠️ **注意 3**：Cursor IDE 请优先选用 Claude 模型名（通过 `/v1/models` 查看），避免使用 GPT 模型名以获得最佳兼容。
 
+### 6. GitHub Actions 自动发布 Docker 镜像（可选）
+
+仓库现在内置了 `.github/workflows/docker-publish.yml`，会在**每次分支 push** 时自动构建并推送 Docker 镜像到 Docker Hub。
+
+首次启用前，请先在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中配置：
+
+- `DOCKERHUB_USERNAME`（Secret）- Docker Hub 用户名
+- `DOCKERHUB_TOKEN`（Secret）- Docker Hub Access Token（建议不要直接使用账号密码）
+- `DOCKERHUB_REPOSITORY`（Variable）- 目标镜像仓库名，例如 `yourname/cursor2api`
+
+发布规则：
+
+- 每次 push 都会发布一个历史标签：`yourname/cursor2api:sha-<12位commit-hash>`
+- 默认分支（当前为 `main`）上的 push 会额外更新：`yourname/cursor2api:latest`
+
+这样可以保留每次提交对应的镜像版本，同时继续提供稳定的 `latest` 标签给默认分支部署使用。
+
+### 7. 使用 Docker Hub 镜像部署（推荐服务器场景）
+
+仓库根目录的 `docker-compose.yml` 已切换为**远端镜像拉取模式**，默认读取：
+
+```bash
+IMAGE_NAME=yourname/cursor2api:latest
+```
+
+你可以在服务器上新建 `.env` 文件：
+
+```bash
+IMAGE_NAME=yourname/cursor2api:latest
+```
+
+然后直接执行：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+如果要部署某次历史提交对应的镜像，也可以改成：
+
+```bash
+IMAGE_NAME=yourname/cursor2api:sha-<12位commit-hash>
+```
+
+说明：
+
+- `docker-compose.yml` 现在不再执行本地 `build:`，而是直接拉取 `IMAGE_NAME` 指定的镜像
+- 如果没有提供 `IMAGE_NAME`，compose 会回退到 `cursor2api:latest`
+- 因为使用了远端镜像拉取，服务器上**不需要再保留项目源码来构建镜像**，只需要保留 compose、配置文件和日志目录即可
+
 ## 🖥️ 日志查看器
 
 启动服务后访问 `http://localhost:3010/logs` 即可打开全链路日志查看器。
@@ -166,6 +216,9 @@ http://localhost:3010/logs?token=sk-your-secret-token-1
 
 ```
 cursor2api/
+├── .github/
+│   └── workflows/
+│       └── docker-publish.yml # GitHub Actions：push 后自动构建并推送 Docker Hub
 ├── src/
 │   ├── index.ts            # 入口 + Express 服务 + 路由 + API 鉴权中间件
 │   ├── config.ts           # 配置管理（含 auth_tokens / vision.proxy）

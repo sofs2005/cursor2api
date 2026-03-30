@@ -1,9 +1,6 @@
 services:
   cursor2api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: cursor2api:latest
+    image: ${IMAGE_NAME:-cursor2api:latest}
     container_name: cursor2api
     restart: unless-stopped
     ports:
