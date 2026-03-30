@@ -140,7 +140,7 @@ OPENAI_BASE_URL=https://your-domain.example.com/v1
 
 ### 6. GitHub Actions 自动发布 Docker 镜像（可选）
 
-仓库现在内置了 `.github/workflows/docker-publish.yml`，会在**每次分支 push** 时自动构建并推送 Docker 镜像到 Docker Hub。
+仓库现在内置了 `.github/workflows/docker-publish.yml`，会在**每次分支 push** 时自动构建并推送 Docker 镜像到 Docker Hub，也支持在 GitHub Actions 页面手动点击 **Run workflow** 触发。
 
 首次启用前，请先在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中配置：
 
@@ -152,6 +152,7 @@ OPENAI_BASE_URL=https://your-domain.example.com/v1
 
 - 每次 push 都会发布一个历史标签：`yourname/cursor2api:sha-<12位commit-hash>`
 - 默认分支（当前为 `main`）上的 push 会额外更新：`yourname/cursor2api:latest`
+- 也可以在 **Actions → Publish Docker image → Run workflow** 中手动触发一次构建与推送
 
 这样可以保留每次提交对应的镜像版本，同时继续提供稳定的 `latest` 标签给默认分支部署使用。
 
