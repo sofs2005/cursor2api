@@ -146,7 +146,13 @@ OPENAI_BASE_URL=https://your-domain.example.com/v1
 
 - `DOCKERHUB_USERNAME`（Secret）- Docker Hub 用户名
 - `DOCKERHUB_TOKEN`（Secret）- Docker Hub Access Token（建议不要直接使用账号密码）
-- `DOCKERHUB_REPOSITORY`（Variable）- 目标镜像仓库名，例如 `yourname/cursor2api`
+- `DOCKERHUB_REPOSITORY`（Variable，可选）- 目标镜像仓库名，例如 `yourname/cursor2api`
+
+如果没有配置 `DOCKERHUB_REPOSITORY`，workflow 会自动回退为：
+
+```text
+<DOCKERHUB_USERNAME>/cursor2api
+```
 
 发布规则：
 
